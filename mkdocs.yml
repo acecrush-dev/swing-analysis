@@ -41,11 +41,10 @@ theme:
         icon: material/brightness-4
         name: Switch to light mode
   features:
-    - navigation.tabs
-    - navigation.tabs.sticky
     - navigation.sections
     - navigation.indexes
     - navigation.top
+    - navigation.footer
     - search.suggest
     - search.highlight
     - content.code.copy
@@ -124,11 +123,15 @@ plugins:
 
 nav:
   - Home: index.md
-  - Introduction: guide/00-introduction.md
-  - Getting Started: guide/01-getting-started.md
-  - Architecture: guide/02-architecture.md
-  - CLI Usage: guide/03-cli-usage.md
-  - REST API: guide/04-rest-api.md
-  - Electron GUI: guide/05-electron-gui.md
-  - Algorithm: guide/06-algorithm.md
-  - Troubleshooting: guide/07-troubleshooting.md
+  - Getting Started:
+      - Introduction: guide/00-introduction.md
+      - Install & first run: guide/01-getting-started.md
+  - Architecture:
+      - Layered design: guide/02-architecture.md
+      - v2.1 algorithm: guide/06-algorithm.md
+  - Usage:
+      - CLI: guide/03-cli-usage.md
+      - REST API: guide/04-rest-api.md
+      - Electron GUI: guide/05-electron-gui.md
+  - Reference:
+      - Troubleshooting: guide/07-troubleshooting.md
