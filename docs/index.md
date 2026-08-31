@@ -1,6 +1,6 @@
 # 📚 swing-analysis Documentation
 
-**English** | [简体中文](zh/index.md)
+**English** | [简体中文](zh/)
 
 ## What is this?
 
