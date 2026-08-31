@@ -75,6 +75,41 @@ python3 -m backend.service --port 0
 
 Electron 作客户端时,自动解析那行 stdout —— 你不用在哪儿硬编码 8321。
 
+## `onnxruntime` 没装
+
+Clip 标注 (RTMDet + RTMPose) 依赖 `onnxruntime`。**基础 segmentation**
+(`--save-clips` 不带 `--clip-bbox/--clip-skel`)**不需要**。如果只想跑
+segmentation 可以不动;想跑标注需要 `pip install onnxruntime`。
+
+如果安装失败,确认 Python 版本。`onnxruntime` 官方 wheel 通常覆盖
+CPython 3.9–3.13。
+
+## RTMDet 报 CoreML 静态/动态 shape 不匹配
+
+```
+onnxruntime:... Non-zero status code returned while running ... CoreML node.
+CoreML static output shape ({1,1,1,8400,8400}) and inferred shape ({1,8400})
+have different ranks.
+```
+
+RTMDet 的输出 shape 是动态的,CoreML EP 不能处理。`RtmdetRunner` 默认
+`prefer_coreml=False`,只用 CPU。如果改 `_make_onnx_session` 时把
+`prefer_coreml` 设成 True 触发这个错,改回去就行。
+
+RTMPose 是固定 shape (192×256 SimCC),CoreML 跑得通;`RtmposeRunner`
+默认 `prefer_coreml=True`。
+
+## 慢 / 卡
+
+- `--clip-bbox` + `--clip-skel`:RTMDet + RTMPose 每帧都跑 (M 系列
+  Mac 上大约 20-30 fps,远低于 segmentation 的 MediaPipe ~100 fps)。
+  长视频 / 多数 clip 会明显慢
+- Apple Silicon 上 RTMPose 用 CoreML EP 会快 3-5 倍;RTMDet 因为
+  CoreML 不兼容只能用 CPU
+- 大量 clip 想后处理:`python -m backend.cli annotate --bbox --skel`
+  复用已加载的 ONNX session (同一个 `ClipAnnotator` 实例),不用每个
+  clip 重新加载 100+ MB 模型
+
 ## MediaPipe 内部 `IndexError` / `KeyError`
 
 通常 `.task` 文件损坏或版本不对。重抓:

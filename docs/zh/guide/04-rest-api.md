@@ -50,7 +50,12 @@ curl -X POST http://127.0.0.1:8321/api/jobs \
 `/api/jobs/upload` 给浏览器客户端用。
 
 `params` 可选。每字段默认值与 CLI 一致。字段语义见
-[03 · CLI 用法](03-cli-usage.md)。
+[03 · CLI 用法](03-cli-usage.md)。v0.2 新增:
+
+- `clip_bbox` (bool, 默认 false) —— 在每个抽出的 clip 上叠加 RTMDet 人物框
+- `clip_skel` (bool, 默认 false) —— 在每个抽出的 clip 上叠加姿态骨架
+- `skel_backend` (string, 默认 `"rtmpose"`) —— 画骨架用哪个模型:
+  `"rtmpose"` (COCO-13) 或 `"mediapipe"` (33 点)
 
 错误响应:
 
@@ -117,6 +122,7 @@ job 当前是 `running` 时拒 (`409`)。先 cancel 再 DELETE。成功后清理
 | `job.started` | `{video_path}` |
 | `pose.progress` | `{phase, frames, total, fps, eta_sec, segments_emitted}` |
 | `segment.emitted` | `{segment: Segment}` (每段一条,按到达顺序) |
+| `clip.annotated` | `{seg_id, clip_in, clip_annotated, frames, bbox, skel, skel_backend}` (仅当 `clip_bbox` 或 `clip_skel` 开启;每段标注完成后发一次) |
 | `job.completed` | `{segment_count}` |
 | `job.failed` | `{error}` (异常 repr) |
 | `job.cancelled` | `{}` |
@@ -193,6 +199,7 @@ curl http://127.0.0.1:8321/api/artifacts/51b71ad9db8b/viz.mp4 -o viz.mp4
 
 - `{rel_path}` 被约束在 `backend/data/jobs/<id>/` 下 —— 路径穿越返 `400`
 - 文件仅在对应 flag 开启 (`save_clips`、`viz_video`) 时存在;缺失返 `404`
+- 标注后的 clip 与原 clip 同目录:`clips/clip_NNN_annotated.mp4`
 - `Content-Type` 由 `mimetypes.guess_type` 按扩展名推断
 
 ## 线协议类型总览

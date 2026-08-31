@@ -1,12 +1,12 @@
 # 02 · 架构
 
-## 四层
+## 四层 (含 pose-runner 扩展)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  L4 · UI                                                        │
 │      • Electron renderer (React, /src/renderer)                 │
-│      • CLI 终端 (无额外依赖)                                    │
+│      • CLI 子命令:  segment  /  annotate                         │
 │      • (Phase C) 浏览器、移动端,任何讲 HTTP 的东西              │
 └──────────────────────────────┬──────────────────────────────────┘
                                │  调到 L3
@@ -18,20 +18,31 @@
 └──────────────────────────────┬──────────────────────────────────┘
                                │  调到 L2
 ┌──────────────────────────────▼──────────────────────────────────┐
-│  L2 · Pipeline  (接缝)                                          │
-│      • backend/service/pipeline.py  — run_pipeline()            │
-│      • 回调: progress_cb / on_segment / should_cancel           │
+│  L2 · Pipeline  (接缝 —— 按用户 flags 组合)                     │
+│      • backend/service/pipeline.py            run_pipeline()    │
+│      • backend/service/pose_runners/                              │
+│          ├── rtmdet.py      ONNX RTMDet 人物检测                   │
+│          ├── rtmpose.py     ONNX RTMPose COCO-13 姿态估计         │
+│          ├── mediapipe.py   MediaPipe 33 点姿态估计                │
+│          ├── drawing.py     bbox / 骨架叠加 (纯 cv2)                │
+│          └── annotate.py    ClipAnnotator (在 clip 上加 bbox+骨架)│
 └──────────────────────────────┬──────────────────────────────────┘
                                │  从 L1 import (不改 L1)
 ┌──────────────────────────────▼──────────────────────────────────┐
 │  L1 · 算法  (真理之源)                                          │
 │      • backend/core/segment_swing.py  (vendored, byte-for-byte) │
 │      • MediaPipe task 模型 (5.5 MB, 已入库)                     │
+│      • RTMDet ONNX (104 MB, 已入库)                             │
+│      • RTMPose ONNX (52 MB, 已入库)                             │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 **接缝在 L2 和 L1 之间**。每个 UI 都通过 `run_pipeline()`。算法除了被
 pipeline 之外没有任何其它 import 方。
+
+**每个 pose-runner 模块纯粹干净** —— 不做 I/O,不做编排。pipeline 层
+(`pipeline.py`) 按用户 flags 组合它们;CLI 的 `annotate` 子命令独立组合
+它们。
 
 ## 每层放什么
 
@@ -43,6 +54,8 @@ pipeline 之外没有任何其它 import 方。
   `ema_smooth`、`compute_velocity_2d`、`extract_one_clip`、
   `phase_timeline`、`SwingSegment`、`_frames_to_tc`
 - `pose_landmarker_lite.task` (5.5 MB) —— MediaPipe Pose 模型,已入库
+- `rtmdet-m-487628.onnx` (104 MB) —— RTMDet 人物检测,已入库
+- `rtmpose-m-27c0e6.onnx` (52 MB) —— RTMPose COCO-13 估计器,已入库
 
 ### L2 — Pipeline (`backend/service/pipeline.py`)
 
@@ -56,13 +69,33 @@ run_pipeline(
     params: Optional[Dict] = None,
     progress_cb: Optional[Callable[[Dict], None]] = None,
     on_segment: Optional[Callable[[Dict], None]] = None,
+    on_clip_annotated: Optional[Callable[[Dict], None]] = None,
     should_cancel: Optional[Callable[[], bool]] = None,
 ) -> Dict
 ```
 
 复刻 `core.segment_swing.main()` 的 Pass 1 + Pass 1.5 + Pass 2 控制流,
 把 stdout `ProgressBar` 换成 `progress_cb` 回调,把每段 emit 的 `print()`
-换成 `on_segment` 回调。返回完整的 `segments.json` payload dict。
+换成 `on_segment` 回调。如果 `params["clip_bbox"]` 或
+`params["clip_skel"]` 开了,每段抽出的 clip 会用 `ClipAnnotator`
+(L2 的 pose-runners 模块) 后处理:用 RTMDet 和/或 RTMPose/MediaPipe 加
+bbox 与骨架。返回完整的 `segments.json` payload dict。
+
+### L2 — pose-runners (`backend/service/pose_runners/`)
+
+每个模块只做一件事;pipeline / `annotate` CLI 组合它们。
+
+| 模块 | 类/函数 | 输入 | 输出 |
+| --- | --- | --- | --- |
+| `rtmdet.py` | `RtmdetRunner` | BGR 帧 | `List[BBox]` (人物检测) |
+| `rtmpose.py` | `RtmposeRunner` | BGR 帧 + 可选 BBox | `List[(x,y,conf)]` (COCO-13 关键点) |
+| `mediapipe.py` | `MediaPipePoseRunner` | BGR 帧 + ts_ms | `List[(x,y,conf)]` (33 关键点) |
+| `drawing.py` | `draw_bboxes` / `draw_skeleton_coco13` / `draw_skeleton_mp33` | canvas + payload | 改 in-place 后的 canvas |
+| `annotate.py` | `ClipAnnotator` | clip mp4 + flags | 标注后的 mp4 |
+
+组合发生在:
+- `pipeline.run_pipeline()` —— `extract_one_clip` → `ClipAnnotator.annotate_clip` 串联 (开了 `clip_bbox` 或 `clip_skel`)
+- `cli.cmd_annotate()` —— 对目录里所有 `clip_*.mp4` 独立跑 `ClipAnnotator` (后处理)
 
 ### L3 — 服务 / 传输 (`backend/service/`)
 

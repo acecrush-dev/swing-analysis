@@ -18,6 +18,12 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# ── docs build output (mkdocs → GitHub Pages) ───────────────────────────
+site/
+docs/.cache/
+# .nojekyll is built by mkdocs build but the marker file we ship in the repo
+# is just a hint for local dev; the deployed site gets a fresh one.
+
 # electron-builder / electron-forge
 release/
 *.blockmap

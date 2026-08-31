@@ -1,6 +1,6 @@
 # 📚 swing-analysis 文档
 
-[English](../index.md) | **简体中文**
+[English](../) | **简体中文**
 
 ## 这是什么?
 

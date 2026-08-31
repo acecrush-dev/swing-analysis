@@ -52,7 +52,12 @@ intentional design for the desktop / LAN scenario. Phase C adds a multipart
 `/api/jobs/upload` for browser clients.
 
 `params` is optional. Every field defaults to the same value the CLI uses.
-See [03 · CLI Usage](03-cli-usage.md) for field semantics.
+See [03 · CLI Usage](03-cli-usage.md) for field semantics. New since v0.2:
+
+- `clip_bbox` (bool, default false) — overlay RTMDet person bbox on each extracted clip
+- `clip_skel` (bool, default false) — overlay pose skeleton on each extracted clip
+- `skel_backend` (string, default `"rtmpose"`) — which model draws the
+  skeleton overlay: `"rtmpose"` (COCO-13) or `"mediapipe"` (33 points)
 
 Error responses:
 
@@ -119,6 +124,7 @@ Event types:
 | `job.started` | `{video_path}` |
 | `pose.progress` | `{phase, frames, total, fps, eta_sec, segments_emitted}` |
 | `segment.emitted` | `{segment: Segment}` (one per cycle, in arrival order) |
+| `clip.annotated` | `{seg_id, clip_in, clip_annotated, frames, bbox, skel, skel_backend}` (only when `clip_bbox` or `clip_skel` was set; per-clip after annotation finishes) |
 | `job.completed` | `{segment_count}` |
 | `job.failed` | `{error}` (repr of the exception) |
 | `job.cancelled` | `{}` |
@@ -198,6 +204,7 @@ curl http://127.0.0.1:8321/api/artifacts/51b71ad9db8b/viz.mp4 -o viz.mp4
   traversal returns `400`.
 - Files only exist if the corresponding flag was set (`save_clips`,
   `viz_video`). Missing files return `404`.
+- Annotated clips live alongside the raw ones: `clips/clip_NNN_annotated.mp4`.
 - `Content-Type` is derived from extension via `mimetypes.guess_type`.
 
 ## Wire-type summary

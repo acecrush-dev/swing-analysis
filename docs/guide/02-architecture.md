@@ -1,12 +1,12 @@
 # 02 · Architecture
 
-## The four layers
+## The four layers (with the pose-runner extension)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  L4 · UI                                                        │
 │      • Electron renderer (React, /src/renderer)                 │
-│      • CLI terminal (no extra deps)                             │
+│      • CLI sub-commands:  segment  /  annotate                  │
 │      • (Phase C) Browser, mobile, anything that speaks HTTP     │
 └──────────────────────────────┬──────────────────────────────────┘
                                │  calls into L3
@@ -18,20 +18,31 @@
 └──────────────────────────────┬──────────────────────────────────┘
                                │  calls into L2
 ┌──────────────────────────────▼──────────────────────────────────┐
-│  L2 · Pipeline  (the seam)                                      │
-│      • backend/service/pipeline.py  — run_pipeline()            │
-│      • callbacks: progress_cb / on_segment / should_cancel      │
+│  L2 · Pipeline  (the seam — composes per user flags)            │
+│      • backend/service/pipeline.py            run_pipeline()    │
+│      • backend/service/pose_runners/                              │
+│          ├── rtmdet.py      ONNX RTMDet person detector           │
+│          ├── rtmpose.py     ONNX RTMPose COCO-13 estimator        │
+│          ├── mediapipe.py   MediaPipe 33-point estimator          │
+│          ├── drawing.py     bbox / skeleton overlay (cv2 only)    │
+│          └── annotate.py    ClipAnnotator (bbox + skel on a clip) │
 └──────────────────────────────┬──────────────────────────────────┘
                                │  imports from L1 (no edits)
 ┌──────────────────────────────▼──────────────────────────────────┐
 │  L1 · Algorithm  (the truth)                                    │
 │      • backend/core/segment_swing.py  (vendored, byte-for-byte) │
 │      • MediaPipe task model (5.5 MB, committed)                 │
+│      • RTMDet ONNX (104 MB, committed)                          │
+│      • RTMPose ONNX (52 MB, committed)                          │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 **The seam is between L2 and L1.** Every UI goes through `run_pipeline()`.
 The algorithm is never imported by anything except the pipeline.
+
+**Each pose-runner module is pure** — no I/O, no orchestration. The pipeline
+layer (`pipeline.py`) composes them based on user flags; the CLI `annotate`
+sub-command composes them standalone.
 
 ## What lives in each layer
 
@@ -43,6 +54,8 @@ The algorithm is never imported by anything except the pipeline.
   `compute_velocity_2d`, `extract_one_clip`, `phase_timeline`,
   `SwingSegment`, `_frames_to_tc`.
 - `pose_landmarker_lite.task` (5.5 MB) — MediaPipe Pose model, committed.
+- `rtmdet-m-487628.onnx` (104 MB) — RTMDet person detector, committed.
+- `rtmpose-m-27c0e6.onnx` (52 MB) — RTMPose COCO-13 estimator, committed.
 
 ### L2 — Pipeline (`backend/service/pipeline.py`)
 
@@ -56,6 +69,7 @@ run_pipeline(
     params: Optional[Dict] = None,
     progress_cb: Optional[Callable[[Dict], None]] = None,
     on_segment: Optional[Callable[[Dict], None]] = None,
+    on_clip_annotated: Optional[Callable[[Dict], None]] = None,
     should_cancel: Optional[Callable[[], bool]] = None,
 ) -> Dict
 ```
@@ -63,7 +77,26 @@ run_pipeline(
 It reproduces the Pass 1 + Pass 1.5 + Pass 2 control flow from
 `core.segment_swing.main()`, replacing the stdout `ProgressBar` with a
 `progress_cb` callback and the `print()` of each emitted segment with an
-`on_segment` callback. Returns the full `segments.json` payload as a dict.
+`on_segment` callback. If `params["clip_bbox"]` or `params["clip_skel"]` is
+set, each extracted clip is post-processed by `ClipAnnotator` (L2
+pose-runners module) which uses RTMDet and/or RTMPose/MediaPipe to overlay
+bbox + skeleton. Returns the full `segments.json` payload as a dict.
+
+### L2 — pose-runners (`backend/service/pose_runners/`)
+
+Each module does one thing; pipeline / `annotate` CLI compose them.
+
+| Module | Class / fn | Inputs | Outputs |
+| --- | --- | --- | --- |
+| `rtmdet.py` | `RtmdetRunner` | BGR frame | `List[BBox]` (person detections) |
+| `rtmpose.py` | `RtmposeRunner` | BGR frame + optional BBox | `List[(x,y,conf)]` (COCO-13 keypoints) |
+| `mediapipe.py` | `MediaPipePoseRunner` | BGR frame + ts_ms | `List[(x,y,conf)]` (33 keypoints) |
+| `drawing.py` | `draw_bboxes` / `draw_skeleton_coco13` / `draw_skeleton_mp33` | canvas + payload | mutated canvas |
+| `annotate.py` | `ClipAnnotator` | clip mp4 + flags | annotated mp4 |
+
+Composition happens in:
+- `pipeline.run_pipeline()` — chains `extract_one_clip` → `ClipAnnotator.annotate_clip` when `clip_bbox` or `clip_skel` is set.
+- `cli.cmd_annotate()` — runs `ClipAnnotator` standalone on every `clip_*.mp4` in a directory (post-hoc).
 
 ### L3 — Service / Transport (`backend/service/`)
 

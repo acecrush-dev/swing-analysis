@@ -102,6 +102,11 @@ ResultsPanel 点一段,renderer 解析 `start_timecode`(`mm:ss.SSS`)转秒,
 MPEG-4 Part 2,Chromium 解不出来;GUI 根本不试。它们依然作为产物下载链
 接可用。
 
+当 `params.clip_bbox` 或 `params.clip_skel` 开启时,服务端还会产出一
+份标注版 (`clip_NNN_annotated.mp4`),GUI 的 clip 列表里跟原文件并列显
+示。标注文件由 `ClipAnnotator`(`backend/service/pose_runners/annotate.py`)
+构建 —— renderer 那边不跑任何姿态/检测模型。
+
 ## Dev 工作流
 
 ```bash

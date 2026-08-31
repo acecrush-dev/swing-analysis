@@ -106,6 +106,12 @@ This sidesteps the cv2 `mp4v` codec problem — the clips written by
 `extract_one_clip` use MPEG-4 Part 2, which Chromium cannot decode; the
 GUI never tries to play them. They're still available as download artifacts.
 
+When `params.clip_bbox` or `params.clip_skel` is set, an annotated copy
+(`clip_NNN_annotated.mp4`) is also produced server-side and surfaces in
+the GUI's clip list alongside the raw clip. The annotated file is built
+by the `ClipAnnotator` (`backend/service/pose_runners/annotate.py`) — the
+GUI does not run any pose or detection models in the renderer.
+
 ## Dev workflow
 
 ```bash

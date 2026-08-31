@@ -128,6 +128,21 @@ def phase_timeline(seg, fps) -> List[Tuple[str, int, int]]: ...
 加新函数 (比如 `dedup_overlapping` 或 `score_swing_quality`),拷进来
 就行;其它地方不用知道。
 
+## 跑在哪些模型上
+
+三个 ONNX / TFLite 模型都在 `backend/models/` 下 (都已入库):
+
+| 模型 | 大小 | 谁用 | 何时 |
+| --- | --- | --- | --- |
+| `pose_landmarker_lite.task` | 5.5 MB | segmentation 右手腕信号 | 总在跑 (Pass 1) |
+| `rtmdet-m-487628.onnx` | 104 MB | clip bbox 叠加 | 开了 `clip_bbox` (或 `--bbox`) |
+| `rtmpose-m-27c0e6.onnx` | 52 MB | clip COCO-13 骨架 | 开了 `clip_skel` 且 `--skel-backend rtmpose` |
+
+切分算法本身 (`backend/core/segment_swing.py`) 只 import MediaPipe Pose
+模型。RTMDet 和 RTMPose 仅供 `ClipAnnotator` 给已切好的 clip 做增强,
+**不参与** segmentation。这让算法库保持不变,vendor 规矩("上游更
+新就重拷")继续适用。
+
 ## 同步上游
 
 ```bash

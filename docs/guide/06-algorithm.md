@@ -139,6 +139,22 @@ upstream `ace-crush-lab` adds a new function (e.g. `dedup_overlapping`
 or `score_swing_quality`), it lands here by copy-paste; nothing else
 needs to know.
 
+## Models at play
+
+Three ONNX / TFLite models live under `backend/models/` (all committed):
+
+| Model | Size | Used by | When |
+| --- | --- | --- | --- |
+| `pose_landmarker_lite.task` | 5.5 MB | segmentation wrist signal | always (Pass 1) |
+| `rtmdet-m-487628.onnx` | 104 MB | clip bbox overlay | when `clip_bbox` (or `--bbox`) is set |
+| `rtmpose-m-27c0e6.onnx` | 52 MB | clip COCO-13 skeleton | when `clip_skel` (or `--skel`) and `--skel-backend rtmpose` |
+
+The segmentation algorithm itself (`backend/core/segment_swing.py`) only
+imports the MediaPipe Pose model. RTMDet and RTMPose are exclusively used
+by the `ClipAnnotator` to enrich already-cut clips — they do **not**
+participate in segmentation. This keeps the algorithm library untouched
+and the same vendoring rule ("re-copy on upstream") applies.
+
 ## Syncing from upstream
 
 ```bash

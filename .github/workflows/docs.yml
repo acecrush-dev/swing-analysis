@@ -1,0 +1,61 @@
+# GitHub Pages — build & deploy the bilingual mkdocs site on every push to main.
+#
+# What it does:
+#   1. checkout the repo
+#   2. install Python deps (mkdocs + material + static-i18n)
+#   3. mkdocs build (outputs English at / and Chinese at /zh/)
+#   4. push site/ to the gh-pages branch (force)
+#
+# Permissions: needs `contents: write` and `pages: write` to push to gh-pages.
+# If you fork and want to use GitHub Pages on your own repo, also enable Pages in
+# the repo Settings → Pages → Source = "GitHub Actions".
+
+name: docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:    # manual trigger from the Actions tab
+
+# Avoid concurrent deploys stepping on each other.
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write   # required for some GH Pages deploy strategies
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history for the "edit this page" links
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install docs deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r docs/requirements-docs.txt
+
+      - name: Build site (English + Chinese)
+        run: mkdocs build --clean --strict
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          publish_branch: gh-pages
+          force_orphan: true
+          enable_jekyll: false   # we put .nojekyll in site/ ourselves; keep filenames literal

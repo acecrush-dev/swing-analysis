@@ -1,21 +1,32 @@
 # 03 · CLI Usage
 
-`python -m backend.cli` — the simplest way to run the pipeline. No service,
-no socket, no Electron. Just stdin/stdout and a result on disk.
+`python -m backend.cli` — two sub-commands, each pure.
 
-## Synopsis
-
-```bash
-python3 -m backend.cli --video <abs-or-rel.mp4> [options]
+```
+backend.cli
+├── segment   从视频切出挥拍周期 (+ 可选 clip 标注)
+└── annotate  对已有 clip_*.mp4 跑 RTMDet / 骨架标注 (后处理)
 ```
 
-## Required
+The `segment` sub-command drives the segmentation pipeline; `annotate` is
+the standalone clip-enrichment step (the same logic the pipeline runs when
+you pass `--clip-bbox` / `--clip-skel`).
+
+## `segment` sub-command
+
+### Synopsis
+
+```bash
+python3 -m backend.cli segment --video <abs-or-rel.mp4> [options]
+```
+
+### Required
 
 | Flag | Meaning |
 | --- | --- |
 | `--video PATH` | Input video. Absolute or relative to CWD / repo root. |
 
-## Common flags (with defaults)
+### Common flags (with defaults)
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
@@ -23,9 +34,12 @@ python3 -m backend.cli --video <abs-or-rel.mp4> [options]
 | `--max-frames N` | `0` (all) | Stop after N frames — debugging & smoke tests |
 | `--save-clips` | off | Write `out_dir/clips/clip_NNN.mp4` per cycle |
 | `--viz-video` | off | Write `out_dir/viz.mp4` with colored phase bars |
+| `--clip-bbox` | off | Per-clip: overlay RTMDet person bbox |
+| `--clip-skel` | off | Per-clip: overlay pose skeleton |
+| `--skel-backend {rtmpose,mediapipe}` | `rtmpose` | Which model draws the skeleton overlay |
 | `--quiet` | off | Suppress progress / segment lines (script-friendly) |
 
-## Tuning knobs (mirror `core.segment_swing.py`)
+### Tuning knobs (mirror `core.segment_swing.py`)
 
 | Flag | Default | What it does |
 | --- | --- | --- |
@@ -43,7 +57,7 @@ python3 -m backend.cli --video <abs-or-rel.mp4> [options]
 
 See [06 · Algorithm](06-algorithm.md) for the meaning of each in context.
 
-## Exit codes
+### Exit codes
 
 | Code | Meaning |
 | --- | --- |
@@ -51,13 +65,14 @@ See [06 · Algorithm](06-algorithm.md) for the meaning of each in context.
 | `1` | Bad input (video not found, model not found) or runtime exception |
 | `130` | Cancelled by user (SIGINT / Ctrl+C) |
 
-## Output layout
+### Output layout
 
 ```
 <out-dir>/
 ├── segments.json              # always
 ├── clips/
 │   ├── clip_001.mp4           # only with --save-clips
+│   ├── clip_001_annotated.mp4 # only with --clip-bbox or --clip-skel
 │   ├── clip_002.mp4
 │   └── ...
 └── viz.mp4                    # only with --viz-video
@@ -67,51 +82,100 @@ See [06 · Algorithm](06-algorithm.md) for the meaning of each in context.
 `ace-crush-lab/app/scripts/segment_swing.py` — same keys, same units, same
 phase schema.
 
-## Examples
+### Examples
 
-### Smoke test (debug speed, don't pollute output dir)
+#### Smoke test (debug speed, don't pollute output dir)
 
 ```bash
-python3 -m backend.cli \
+python3 -m backend.cli segment \
     --video /abs/fdl.mp4 \
     --max-frames 60 \
     --out-dir /tmp/swing_smoke
 ```
 
-### Full run with clips + viz
+#### Full run with clips + viz
 
 ```bash
-python3 -m backend.cli \
+python3 -m backend.cli segment \
     --video /abs/match.mp4 \
     --save-clips \
     --viz-video \
     --out-dir /Users/me/swing_out/match_2026_08_31
 ```
 
-### Stricter merging for a fast-paced rally
+#### Full run with bbox + skeleton overlay on each clip
 
 ```bash
-python3 -m backend.cli \
+python3 -m backend.cli segment \
+    --video /abs/match.mp4 \
+    --save-clips \
+    --clip-bbox \
+    --clip-skel \
+    --skel-backend rtmpose \
+    --out-dir /Users/me/swing_out/match_annotated
+# → clips/clip_001.mp4          (raw cut)
+# → clips/clip_001_annotated.mp4 (bbox + skeleton overlay)
+```
+
+#### Stricter merging for a fast-paced rally
+
+```bash
+python3 -m backend.cli segment \
     --video /abs/serve.mp4 \
     --gap-merge 0.8 \
     --max-bridge 0.8 \
     --out-dir /tmp/swing_strict
 ```
 
-### Looser merging for slow swings
+## `annotate` sub-command
+
+Runs RTMDet (bbox) and/or pose skeleton overlay on every `clip_*.mp4` in a
+directory. Independent of segmentation — works on any pre-cut clips.
+
+### Synopsis
 
 ```bash
-python3 -m backend.cli \
-    --video /abs/slow.mp4 \
-    --gap-merge 2.5 \
-    --min-peak 0.2 \
-    --out-dir /tmp/swing_loose
+python3 -m backend.cli annotate --clips-dir <dir> [--bbox] [--skel] [--skel-backend {rtmpose,mediapipe}]
+```
+
+### Flags
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--clips-dir DIR` | (required) | Directory to scan for `clip_*.mp4` (files ending in `_annotated.mp4` are skipped) |
+| `--bbox` | off | Draw RTMDet person bbox on every frame |
+| `--skel` | off | Draw pose skeleton on every frame |
+| `--skel-backend {rtmpose,mediapipe}` | `rtmpose` | Which model provides the skeleton |
+
+### Examples
+
+#### Annotate already-cut clips with both overlays
+
+```bash
+python3 -m backend.cli annotate \
+    --clips-dir backend/data/jobs/<id>/clips \
+    --bbox \
+    --skel
+# → <id>/clips/clip_001_annotated.mp4 (next to the original)
+```
+
+#### Just skeleton (no bbox)
+
+```bash
+python3 -m backend.cli annotate \
+    --clips-dir /path/to/clips \
+    --skel \
+    --skel-backend mediapipe
 ```
 
 ## Pipeline parity with the REST service
 
-The CLI calls `run_pipeline()` directly. The REST service calls the same
+`segment` calls `run_pipeline()` directly. The REST service calls the same
 function inside `JobManager._run()`. There is no functional divergence —
 same algorithm, same parameters, same outputs. Use whichever UI matches
 your context (terminal for batch jobs, REST for clients, GUI for
 exploration).
+
+`annotate` is also exposed standalone because clip enrichment is useful as
+a post-hoc step — re-run it on the same clips with different flags
+without re-doing segmentation.

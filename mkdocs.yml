@@ -1,0 +1,134 @@
+# mkdocs configuration for swing-analysis.
+#
+# Single config drives TWO languages via mkdocs-static-i18n:
+#   English (default) → site/index.html, site/guide/...
+#   Chinese           → site/zh/index.html, site/zh/guide/...
+#
+# Build:
+#   mkdocs build                                          # builds both languages into site/
+#   scripts/build-docs.sh                                 # same, with a venv check
+#
+# Deploy:
+#   mkdocs gh-deploy --force                              # pushes site/ to gh-pages branch
+#   GitHub Actions does this automatically on push to main (see .github/workflows/docs.yml).
+
+site_name: swing-analysis
+site_description: Desktop tennis-swing auto-segmentation — vendored algorithm + pluggable UI
+site_url: https://leochan007.github.io/swing-analysis/
+repo_url: https://github.com/leochan007/swing-analysis
+repo_name: leochan007/swing-analysis
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  language: en
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/leochan007/swing-analysis
+      name: swing-analysis on GitHub
+  generator: false
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.keys
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+  - pymdownx.caret
+  - pymdownx.smartsymbols
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search
+  - i18n:
+      docs_structure: folder
+      fallback_to_default: true
+      languages:
+        - locale: en
+          name: English
+          default: true
+          build: true
+          nav_translations:
+            Home:               Home
+            Introduction:       Introduction
+            Getting Started:    Getting Started
+            Architecture:       Architecture
+            CLI Usage:          CLI Usage
+            REST API:           REST API
+            Electron GUI:       Electron GUI
+            Algorithm:          Algorithm
+            Troubleshooting:    Troubleshooting
+        - locale: zh
+          name: 简体中文
+          build: true
+          nav_translations:
+            Home:               首页
+            Introduction:       项目介绍
+            Getting Started:    快速开始
+            Architecture:       架构
+            CLI Usage:          CLI 用法
+            REST API:           REST API
+            Electron GUI:       Electron GUI
+            Algorithm:          算法原理
+            Troubleshooting:    故障排查
+
+nav:
+  - Home: index.md
+  - Introduction: guide/00-introduction.md
+  - Getting Started: guide/01-getting-started.md
+  - Architecture: guide/02-architecture.md
+  - CLI Usage: guide/03-cli-usage.md
+  - REST API: guide/04-rest-api.md
+  - Electron GUI: guide/05-electron-gui.md
+  - Algorithm: guide/06-algorithm.md
+  - Troubleshooting: guide/07-troubleshooting.md
