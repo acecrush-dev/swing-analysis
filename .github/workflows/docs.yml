@@ -4,11 +4,10 @@
 #   1. checkout the repo
 #   2. install Python deps (mkdocs + material + static-i18n)
 #   3. mkdocs build (outputs English at / and Chinese at /zh/)
-#   4. push site/ to the gh-pages branch (force)
+#   4. upload site/ as a Pages artifact + deploy via official actions/deploy-pages
 #
-# Permissions: needs `contents: write` and `pages: write` to push to gh-pages.
-# If you fork and want to use GitHub Pages on your own repo, also enable Pages in
-# the repo Settings → Pages → Source = "GitHub Actions".
+# Uses the official GitHub Pages deploy action (recommended by GitHub) instead of
+# pushing to a gh-pages branch. Requires Pages source to be "GitHub Actions".
 
 name: docs
 
@@ -21,23 +20,26 @@ on:
       - '.github/workflows/docs.yml'
   workflow_dispatch:    # manual trigger from the Actions tab
 
-# Avoid concurrent deploys stepping on each other.
 concurrency:
   group: docs-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
   pages: write
-  id-token: write   # required for some GH Pages deploy strategies
+  id-token: write   # required by actions/deploy-pages for OIDC token verification
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # full history for the "edit this page" links
+          fetch-depth: 0
+          lfs: true   # pull the LFS-tracked ONNX models (workflow file shouldn't depend on them, but keep checkout consistent)
 
       - uses: actions/setup-python@v5
         with:
@@ -51,11 +53,14 @@ jobs:
       - name: Build site (English + Chinese)
         run: mkdocs build --clean --strict
 
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./site
-          publish_branch: gh-pages
-          force_orphan: true
-          enable_jekyll: false   # we put .nojekyll in site/ ourselves; keep filenames literal
+          path: ./site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
