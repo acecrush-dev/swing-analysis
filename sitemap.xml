@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
+    <url>
+        <loc>https://leochan007.github.io/swing-analysis/</loc>
+        <lastmod>2026-08-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://leochan007.github.io/swing-analysis/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://leochan007.github.io/swing-analysis/zh/"/>
+    </url>
+    <url>
+        <loc>https://leochan007.github.io/swing-analysis/guide/00-introduction/</loc>
+        <lastmod>2026-08-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://leochan007.github.io/swing-analysis/guide/00-introduction/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://leochan007.github.io/swing-analysis/zh/guide/00-introduction/"/>
+    </url>
+    <url>
+        <loc>https://leochan007.github.io/swing-analysis/guide/01-getting-started/</loc>
+        <lastmod>2026-08-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://leochan007.github.io/swing-analysis/guide/01-getting-started/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://leochan007.github.io/swing-analysis/zh/guide/01-getting-started/"/>
+    </url>
+    <url>
+        <loc>https://leochan007.github.io/swing-analysis/guide/02-architecture/</loc>
+        <lastmod>2026-08-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://leochan007.github.io/swing-analysis/guide/02-architecture/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://leochan007.github.io/swing-analysis/zh/guide/02-architecture/"/>
+    </url>
+    <url>
+        <loc>https://leochan007.github.io/swing-analysis/guide/03-cli-usage/</loc>
+        <lastmod>2026-08-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://leochan007.github.io/swing-analysis/guide/03-cli-usage/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://leochan007.github.io/swing-analysis/zh/guide/03-cli-usage/"/>
+    </url>
+    <url>
+        <loc>https://leochan007.github.io/swing-analysis/guide/04-rest-api/</loc>
+        <lastmod>2026-08-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://leochan007.github.io/swing-analysis/guide/04-rest-api/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://leochan007.github.io/swing-analysis/zh/guide/04-rest-api/"/>
+    </url>
+    <url>
+        <loc>https://leochan007.github.io/swing-analysis/guide/05-electron-gui/</loc>
+        <lastmod>2026-08-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://leochan007.github.io/swing-analysis/guide/05-electron-gui/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://leochan007.github.io/swing-analysis/zh/guide/05-electron-gui/"/>
+    </url>
+    <url>
+        <loc>https://leochan007.github.io/swing-analysis/guide/06-algorithm/</loc>
+        <lastmod>2026-08-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://leochan007.github.io/swing-analysis/guide/06-algorithm/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://leochan007.github.io/swing-analysis/zh/guide/06-algorithm/"/>
+    </url>
+    <url>
+        <loc>https://leochan007.github.io/swing-analysis/guide/07-troubleshooting/</loc>
+        <lastmod>2026-08-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://leochan007.github.io/swing-analysis/guide/07-troubleshooting/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://leochan007.github.io/swing-analysis/zh/guide/07-troubleshooting/"/>
+    </url>
+    <url>
+        <loc>https://leochan007.github.io/swing-analysis/zh/</loc>
+        <lastmod>2026-08-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://leochan007.github.io/swing-analysis/zh/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://leochan007.github.io/swing-analysis/"/>
+    </url>
+    <url>
+        <loc>https://leochan007.github.io/swing-analysis/zh/guide/00-introduction/</loc>
+        <lastmod>2026-08-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://leochan007.github.io/swing-analysis/zh/guide/00-introduction/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://leochan007.github.io/swing-analysis/guide/00-introduction/"/>
+    </url>
+    <url>
+        <loc>https://leochan007.github.io/swing-analysis/zh/guide/01-getting-started/</loc>
+        <lastmod>2026-08-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://leochan007.github.io/swing-analysis/zh/guide/01-getting-started/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://leochan007.github.io/swing-analysis/guide/01-getting-started/"/>
+    </url>
+    <url>
+        <loc>https://leochan007.github.io/swing-analysis/zh/guide/02-architecture/</loc>
+        <lastmod>2026-08-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://leochan007.github.io/swing-analysis/zh/guide/02-architecture/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://leochan007.github.io/swing-analysis/guide/02-architecture/"/>
+    </url>
+    <url>
+        <loc>https://leochan007.github.io/swing-analysis/zh/guide/03-cli-usage/</loc>
+        <lastmod>2026-08-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://leochan007.github.io/swing-analysis/zh/guide/03-cli-usage/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://leochan007.github.io/swing-analysis/guide/03-cli-usage/"/>
+    </url>
+    <url>
+        <loc>https://leochan007.github.io/swing-analysis/zh/guide/04-rest-api/</loc>
+        <lastmod>2026-08-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://leochan007.github.io/swing-analysis/zh/guide/04-rest-api/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://leochan007.github.io/swing-analysis/guide/04-rest-api/"/>
+    </url>
+    <url>
+        <loc>https://leochan007.github.io/swing-analysis/zh/guide/05-electron-gui/</loc>
+        <lastmod>2026-08-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://leochan007.github.io/swing-analysis/zh/guide/05-electron-gui/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://leochan007.github.io/swing-analysis/guide/05-electron-gui/"/>
+    </url>
+    <url>
+        <loc>https://leochan007.github.io/swing-analysis/zh/guide/06-algorithm/</loc>
+        <lastmod>2026-08-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://leochan007.github.io/swing-analysis/zh/guide/06-algorithm/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://leochan007.github.io/swing-analysis/guide/06-algorithm/"/>
+    </url>
+    <url>
+        <loc>https://leochan007.github.io/swing-analysis/zh/guide/07-troubleshooting/</loc>
+        <lastmod>2026-08-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://leochan007.github.io/swing-analysis/zh/guide/07-troubleshooting/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://leochan007.github.io/swing-analysis/guide/07-troubleshooting/"/>
+    </url>
+</urlset>
