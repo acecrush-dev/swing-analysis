@@ -1,0 +1,26 @@
+{
+  "name": "swing-analysis-gui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Electron + React + TS GUI for the swing-analysis Python service.",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "@vitejs/plugin-react": "^4",
+    "electron": "^31",
+    "electron-vite": "^2",
+    "typescript": "^5.4",
+    "vite": "^5"
+  },
+  "dependencies": {
+    "react": "^18",
+    "react-dom": "^18"
+  }
+}

@@ -1,0 +1,61 @@
+/** Wire types — mirror backend.service.schemas.py. */
+export interface JobParams {
+  v_swing: number;
+  gap_merge: number;
+  max_bridge: number;
+  min_peak: number;
+  smooth_alpha: number;
+  max_lost_frames: number;
+  min_dur: number;
+  max_dur: number;
+  buf_before: number;
+  buf_after: number;
+  skip: number;
+  max_frames: number;
+  save_clips: boolean;
+  viz_video: boolean;
+}
+
+export const DEFAULT_PARAMS: JobParams = {
+  v_swing: 0.10, gap_merge: 1.5, max_bridge: 1.5, min_peak: 0.30,
+  smooth_alpha: 0.65, max_lost_frames: 8, min_dur: 0.3, max_dur: 6.0,
+  buf_before: 1.0, buf_after: 1.0, skip: 1, max_frames: 0,
+  save_clips: false, viz_video: false,
+};
+
+export interface SegmentPhase {
+  phase: 'ready' | 'windup' | 'contact' | 'follow_through';
+  start_frame: number; end_frame: number;
+}
+
+export interface Segment {
+  seg_id: number;
+  start_frame: number; end_frame: number;
+  active_start_frame: number; active_end_frame: number;
+  contact_frame: number; peak_velocity: number;
+  duration_sec: number; total_sec: number;
+  start_timecode: string; contact_timecode: string; end_timecode: string;
+  over_long: boolean; merged_intervals: number;
+  peak_frame?: number; peak_timecode?: string;
+  phases: SegmentPhase[];
+}
+
+export interface JobInfo {
+  job_id: string;
+  state: 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+  video_path: string;
+  params: JobParams;
+  created_at: number; started_at?: number; finished_at?: number;
+  error?: string;
+  segments: Segment[];
+  segments_payload?: { fps: number; total_frames: number; duration_sec: number } | null;
+  queue_position?: number | null;
+}
+
+export type ProgressEvent =
+  | { type: 'job.started'; job_id: string; data: { video_path: string } }
+  | { type: 'pose.progress'; job_id: string; data: { frames: number; total: number; fps: number; eta_sec: number | null; segments_emitted: number } }
+  | { type: 'segment.emitted'; job_id: string; data: { segment: Segment } }
+  | { type: 'job.completed'; job_id: string; data: { segment_count: number } }
+  | { type: 'job.failed'; job_id: string; data: { error: string } }
+  | { type: 'job.cancelled'; job_id: string; data: Record<string, never> };

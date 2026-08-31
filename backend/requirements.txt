@@ -1,0 +1,9 @@
+# Pin ranges known to work on this Python version.
+# MediaPipe's official wheels historically capped at 3.12; verify with:
+#   python3 -c "import mediapipe; print(mediapipe.__version__)"
+fastapi>=0.110
+uvicorn[standard]>=0.27
+numpy>=1.26
+opencv-python>=4.8
+mediapipe>=0.10
+pydantic>=2.6
