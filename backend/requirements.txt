@@ -7,3 +7,7 @@ numpy>=1.26
 opencv-python>=4.8
 mediapipe>=0.10
 pydantic>=2.6
+
+# ONNX runtime — for RTMDet (person detect) + RTMPose (alt pose backend).
+# CoreML EP preferred on Apple Silicon; falls back to CPU automatically.
+onnxruntime>=1.17

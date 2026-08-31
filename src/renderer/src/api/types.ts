@@ -14,6 +14,10 @@ export interface JobParams {
   max_frames: number;
   save_clips: boolean;
   viz_video: boolean;
+  // clip annotation (optional, applied per clip after extraction)
+  clip_bbox: boolean;
+  clip_skel: boolean;
+  skel_backend: 'rtmpose' | 'mediapipe';
 }
 
 export const DEFAULT_PARAMS: JobParams = {
@@ -21,6 +25,7 @@ export const DEFAULT_PARAMS: JobParams = {
   smooth_alpha: 0.65, max_lost_frames: 8, min_dur: 0.3, max_dur: 6.0,
   buf_before: 1.0, buf_after: 1.0, skip: 1, max_frames: 0,
   save_clips: false, viz_video: false,
+  clip_bbox: false, clip_skel: false, skel_backend: 'rtmpose',
 };
 
 export interface SegmentPhase {
@@ -56,6 +61,7 @@ export type ProgressEvent =
   | { type: 'job.started'; job_id: string; data: { video_path: string } }
   | { type: 'pose.progress'; job_id: string; data: { frames: number; total: number; fps: number; eta_sec: number | null; segments_emitted: number } }
   | { type: 'segment.emitted'; job_id: string; data: { segment: Segment } }
+  | { type: 'clip.annotated'; job_id: string; data: { seg_id: number; clip_in: string; clip_annotated: string; frames: number; bbox: boolean; skel: boolean; skel_backend: 'rtmpose' | 'mediapipe' } }
   | { type: 'job.completed'; job_id: string; data: { segment_count: number } }
   | { type: 'job.failed'; job_id: string; data: { error: string } }
   | { type: 'job.cancelled'; job_id: string; data: Record<string, never> };

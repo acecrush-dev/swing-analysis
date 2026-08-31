@@ -163,6 +163,9 @@ class JobManager:
                 rec.segments.append(s)
             self._broadcast(rec, "segment.emitted", {"segment": s})
 
+        def on_clip_annotated(d: Dict) -> None:
+            self._broadcast(rec, "clip.annotated", d)
+
         try:
             payload = run_pipeline(
                 Path(rec.video_path),
@@ -171,6 +174,7 @@ class JobManager:
                 params=rec.params.model_dump(),
                 progress_cb=progress_cb,
                 on_segment=on_segment,
+                on_clip_annotated=on_clip_annotated,
                 should_cancel=lambda: rec._cancel_flag.is_set(),
             )
             if rec._cancel_flag.is_set():

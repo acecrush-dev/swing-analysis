@@ -22,6 +22,10 @@ class JobParams(BaseModel):
     max_frames: int = 0
     save_clips: bool = False
     viz_video: bool = False
+    # clip annotation (optional, applied after extraction per clip)
+    clip_bbox: bool = False        # RTMDet bbox overlay
+    clip_skel: bool = False        # pose skeleton overlay
+    skel_backend: str = "rtmpose"  # "rtmpose" | "mediapipe"
 
 
 class JobCreate(BaseModel):

@@ -5,9 +5,15 @@ substituting:
   - a `progress_cb` callback for the stdout `ProgressBar`
   - an `on_segment` callback for the in-line `print` of each emitted segment
   - a deterministic `out_dir` parameter (CLI passes one, REST uses job-scoped dir)
+  - optional clip annotation step (RTMDet bbox + RTMPose/MediaPipe skeleton)
 
 `backend.core.segment_swing` is **not** modified. We only import its public
 helpers. If upstream changes, re-copy the file and re-run tests.
+
+The pipeline composes (per user flags):
+  core.segment_swing  → segmentation (wrist signal + cycles)
+  pose_runners.annotate → optional per-clip bbox + skeleton overlay
+Each step is independent; the pipeline is a thin orchestrator.
 """
 from __future__ import annotations
 
@@ -23,11 +29,13 @@ from typing import Callable, Dict, List, Optional
 import cv2
 
 from ..core import segment_swing as core
+from .pose_runners.annotate import ClipAnnotator
 
 
 # ── types ────────────────────────────────────────────────────────────────
 ProgressCb = Callable[[Dict], None]
 SegmentCb = Callable[[Dict], None]
+ClipAnnotatedCb = Callable[[Dict], None]
 
 
 class JobCancelled(Exception):
@@ -50,6 +58,10 @@ DEFAULT_PARAMS: Dict = {
     "max_frames": 0,
     "save_clips": False,
     "viz_video": False,
+    # clip annotation (optional, applied after extraction per clip)
+    "clip_bbox": False,        # RTMDet bbox overlay
+    "clip_skel": False,        # pose skeleton overlay
+    "skel_backend": "rtmpose", # "rtmpose" | "mediapipe"
 }
 
 
@@ -61,9 +73,10 @@ def run_pipeline(
     params: Optional[Dict] = None,
     progress_cb: Optional[ProgressCb] = None,
     on_segment: Optional[SegmentCb] = None,
+    on_clip_annotated: Optional[ClipAnnotatedCb] = None,
     should_cancel: Optional[Callable[[], bool]] = None,
 ) -> Dict:
-    """Run Pass 1 + Pass 1.5 + (optional) Pass 2.
+    """Run Pass 1 + Pass 1.5 + (optional) Pass 2 + (optional) clip annotation.
 
     Returns the segments.json payload as a dict. Raises JobCancelled if
     should_cancel() ever returns True mid-run.
@@ -125,6 +138,14 @@ def run_pipeline(
     clip_executor: Optional[ThreadPoolExecutor] = None
     if p["save_clips"]:
         clip_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="clip")
+
+    # Clip annotator — lazy-loaded only when clip_bbox or clip_skel is on.
+    # Shared across all clip extraction tasks to avoid reloading ONNX
+    # sessions (100+ MB) for every clip.
+    annotator: Optional[ClipAnnotator] = None
+    if p["save_clips"] and (p["clip_bbox"] or p["clip_skel"]):
+        annotator = ClipAnnotator()
+
     online_segments: List[core.SwingSegment] = []
 
     try:
@@ -167,8 +188,12 @@ def run_pipeline(
                 if clip_executor is not None:
                     clips_dir = out_dir / "clips"
                     clips_dir.mkdir(parents=True, exist_ok=True)
+                    clip_path = clips_dir / f"clip_{seg.seg_id:03d}.mp4"
                     clip_executor.submit(
-                        core.extract_one_clip, video_path, seg, clips_dir, fps, width, height
+                        _extract_and_maybe_annotate,
+                        video_path, seg, clips_dir, fps, width, height,
+                        annotator, p["clip_bbox"], p["clip_skel"], p["skel_backend"],
+                        on_clip_annotated,
                     )
 
             if progress_cb is not None:
@@ -198,6 +223,15 @@ def run_pipeline(
         online_segments.append(seg)
         if on_segment is not None:
             on_segment(_seg_to_dict(seg))
+        if clip_executor is not None:
+            clips_dir = out_dir / "clips"
+            clips_dir.mkdir(parents=True, exist_ok=True)
+            clip_executor.submit(
+                _extract_and_maybe_annotate,
+                video_path, seg, clips_dir, fps, width, height,
+                annotator, p["clip_bbox"], p["clip_skel"], p["skel_backend"],
+                on_clip_annotated,
+            )
 
     detected_pct = 100.0 * n_valid / max(frame_idx, 1)
 
@@ -299,3 +333,44 @@ def _seg_to_dict(seg: core.SwingSegment) -> Dict:
         "over_long": seg.over_long,
         "merged_intervals": seg.merged_intervals,
     }
+
+
+def _extract_and_maybe_annotate(
+    video_path: Path,
+    seg: core.SwingSegment,
+    clips_dir: Path,
+    fps: float,
+    width: int,
+    height: int,
+    annotator: Optional[ClipAnnotator],
+    bbox: bool,
+    skel: bool,
+    skel_backend: str,
+    on_clip_annotated: Optional[ClipAnnotatedCb] = None,
+) -> None:
+    """Background task: extract one clip, then optionally annotate it.
+
+    Extracted clip lives at `<clips_dir>/clip_NNN.mp4`.
+    If annotation enabled: writes `<clips_dir>/clip_NNN_annotated.mp4` and
+    notifies the caller via `on_clip_annotated`.
+    """
+    core.extract_one_clip(video_path, seg, clips_dir, fps, width, height)
+    if annotator is not None and (bbox or skel):
+        clip_in = clips_dir / f"clip_{seg.seg_id:03d}.mp4"
+        if not clip_in.exists():
+            return
+        try:
+            res = annotator.annotate_clip(clip_in, bbox=bbox, skel=skel, skel_backend=skel_backend)
+            if on_clip_annotated is not None:
+                on_clip_annotated({
+                    "seg_id": seg.seg_id,
+                    "clip_in": str(clip_in),
+                    "clip_annotated": str(res.clip_out),
+                    "frames": res.frames_processed,
+                    "bbox": bbox,
+                    "skel": skel,
+                    "skel_backend": skel_backend,
+                })
+        except Exception as exc:  # noqa: BLE001
+            # annotation failure must not break segmentation
+            print(f"  ✗ clip {seg.seg_id:03d} annotate failed: {exc!r}", flush=True)

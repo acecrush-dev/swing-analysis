@@ -37,6 +37,28 @@ export function ParamsForm({ params, onChange, disabled }: Props) {
                  onChange={(e) => onChange({ ...params, viz_video: e.target.checked })} />
           {' '}生成 viz.mp4 (彩色相位条)
         </label>
+        <fieldset style={{ gridColumn: '1 / 3', border: '1px solid #333', borderRadius: 4, padding: 6, marginTop: 4 }}>
+          <legend style={{ padding: '0 4px', fontSize: 12 }}>clip 标注</legend>
+          <label style={{ display: 'block' }}>
+            <input type="checkbox" checked={params.clip_bbox} disabled={!params.save_clips}
+                   onChange={(e) => onChange({ ...params, clip_bbox: e.target.checked })} />
+            {' '}RTMDet bbox 框
+          </label>
+          <label style={{ display: 'block' }}>
+            <input type="checkbox" checked={params.clip_skel} disabled={!params.save_clips}
+                   onChange={(e) => onChange({ ...params, clip_skel: e.target.checked })} />
+            {' '}姿态骨架
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+            <span style={{ fontSize: 12, opacity: 0.8 }}>骨架 backend:</span>
+            <select value={params.skel_backend} disabled={!params.save_clips || !params.clip_skel}
+                    onChange={(e) => onChange({ ...params, skel_backend: e.target.value as 'rtmpose' | 'mediapipe' })}
+                    style={{ background: '#222', color: '#eee', border: '1px solid #444', padding: '2px 4px' }}>
+              <option value="rtmpose">RTMPose (COCO-13)</option>
+              <option value="mediapipe">MediaPipe (33 点)</option>
+            </select>
+          </label>
+        </fieldset>
       </div>
     </fieldset>
   );
