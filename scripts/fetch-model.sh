@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Fetch pose_landmarker_lite.task into backend/models/.
-# Prefers copying from ace-crush-lab (no download); falls back to MediaPipe CDN.
+# Ensure backend/models/pose_landmarker_lite.task is present.
+# The file is committed to the repo (5.5 MB) — this script is only a fallback
+# for fresh clones that somehow lost it, or for users who want to refresh from
+# upstream MediaPipe CDN.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -12,7 +14,7 @@ DEST="$MODELS_DIR/pose_landmarker_lite.task"
 SRC="/Users/leo/Documents/codes/ai/ace-crush-lab/app/scripts/pose_landmarker_lite.task"
 
 if [[ -f "$DEST" ]]; then
-    echo "[fetch-model] 已存在 $DEST"
+    echo "[fetch-model] 已就位 $DEST ($(du -h "$DEST" | cut -f1))"
     exit 0
 fi
 

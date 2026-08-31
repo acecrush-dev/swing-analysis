@@ -26,8 +26,9 @@ electron-builder-cache/
 # ── python venv + runtime + build intermediates ────────────────────────
 backend/.venv/
 backend/data/                    # service.json, jobs/<id>/segments.json etc.
-backend/models/*.task            # pose_landmarker_lite.task (binary, fetched)
-backend/models/*.tflite
+# NOTE: backend/models/pose_landmarker_lite.task IS committed (5.5 MB;
+# fetched model lives next to the code so a fresh clone runs out of the box).
+# scripts/fetch-model.sh re-downloads only if missing.
 backend/cli_jobs/                # if CLI --out-dir points here
 __pycache__/
 *.pyc
