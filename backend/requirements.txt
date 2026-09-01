@@ -5,7 +5,16 @@ fastapi>=0.110
 uvicorn[standard]>=0.27
 numpy>=1.26
 opencv-python>=4.8
-mediapipe>=0.10
+# Pinned: mediapipe 1.0 wheel has a regression on Apple Silicon —
+# TensorsToDetectionsCalculator::Open() aborts inside the Metal delegate
+# init (`DrishtiMetalHelper initWithCalculatorContext:` →
+# `Check failed: service_ Service is unavailable.`), regardless of Python
+# version (verified broken on 3.12.12 and 3.13.11). 0.10.35 is the last
+# 0.10.x release and works cleanly (M-series Mac, ~125 fps for 60 frames).
+# Re-test with `mediapipe>=1.0` once the upstream calculator sanity check
+# is fixed; revert this pin and re-run the smoke test in
+# docs/guide/07-troubleshooting.md#apple-silicon-metal-delegate-regression.
+mediapipe==0.10.35
 pydantic>=2.6
 
 # ONNX runtime — for RTMDet (person detect) + RTMPose (alt pose backend).

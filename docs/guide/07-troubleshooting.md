@@ -91,6 +91,52 @@ If the script fails to download (offline machine), copy from another
 machine that has it, or extract it from a fresh `pip install mediapipe`:
 it's bundled at `<venv>/lib/python3.X/site-packages/mediapipe/modules/pose_landmarker/pose_landmarker_lite.task`.
 
+## Apple Silicon Metal delegate regression (mediapipe 1.0)
+
+If you see an abort like this on an M-series Mac, **don't debug your
+video — it's not your fault**:
+
+```
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+W  Feedback manager requires a model with a single signature inference.
+   Disabling support for feedback tensors.
+F  Check failed: service_ Service is unavailable.
+*** Check failure stack trace: ***
+    @  ... -[DrishtiMetalHelper initWithCalculatorContext:]
+    @  ... mediapipe::api2::TensorsToDetectionsCalculator::Open()
+    @  ... mediapipe::CalculatorNode::OpenNode()
+```
+
+Root cause: the **mediapipe 1.0** wheel has a regression where the
+`TensorsToDetectionsCalculator` graph unconditionally initialises the
+Metal delegate helper during `Open()`. Apple's `DrishtiMetalHelper` then
+fails an internal sanity check (`service_ Service is unavailable.`) and
+aborts the process. Verified broken on Python 3.12.12 *and* 3.13.11 —
+Python version is **not** the variable. Re-downloading the model (lite
+or heavy) from Google's CDN does not help — the bug is in the wheel.
+
+**Fix** (already baked into `requirements.txt`): pin `mediapipe==0.10.35`.
+This is the last 0.10.x release; it does not contain the Metal-init path
+and runs cleanly on M-series Mac (~125 fps on fdl.mp4, 60-frame smoke
+test).
+
+```bash
+# If you accidentally upgraded past 0.10.x:
+backend/.venv/bin/pip install --upgrade --force-reinstall 'mediapipe==0.10.35'
+
+# Verify before re-running the smoke test:
+backend/.venv/bin/python -c "import mediapipe; print(mediapipe.__version__)"
+# expect: 0.10.35
+```
+
+**When can you un-pin?** Once MediaPipe 1.0.x fixes the
+`TensorsToDetectionsCalculator::Open()` Metal-init sanity check. Track
+the upstream issue and re-test with `mediapipe>=1.0`; if a 1.x release
+passes the same 60-frame demo.mp4 smoke test without aborting, edit
+`backend/requirements.txt` to drop the `==0.10.35` pin. Until then,
+**don't `pip install --upgrade mediapipe`** without checking this
+section.
+
 ## No segments detected on a clearly-action-filled video
 
 Work the algorithm knobs in this order:

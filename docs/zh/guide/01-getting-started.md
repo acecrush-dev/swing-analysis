@@ -6,10 +6,11 @@
 
 | 工具 | 版本 | 为什么 |
 | --- | --- | --- |
-| Python | ≥ 3.10 | MediaPipe 预编译 wheel 历史上止于 3.12;本机 3.13 已实测可跑 |
+| Python | ≥ 3.10 | MediaPipe 预编译 wheel 历史上止于 3.12;3.13 已实测可跑 |
 | Node.js | ≥ 18 | Electron 31 + electron-vite |
 | Git | 任意 | clone 仓库 |
 | ffmpeg | 不需要 | OpenCV 自带编解码 |
+| **mediapipe** | **== 0.10.35**(已在 `backend/requirements.txt` 里钉死) | MediaPipe **1.0** 的 wheel 在 Apple Silicon 上有回归,会在 `TensorsToDetectionsCalculator::Open()` abort。详见 [07 · 故障排查](07-troubleshooting.md#apple-silicon-metal-delegate-回归)。**不要直接 `pip install --upgrade mediapipe`** —— 升之前先看那节 |
 
 ## 1. Clone
 
@@ -45,7 +46,7 @@ bash scripts/fetch-model.sh    # 应该打 "已就位 …"
 
 ```bash
 # 用你手头任何短片
-python3 -m backend.cli \
+python3 -m backend.cli segment \
     --video /abs/path/to/your/video.mp4 \
     --max-frames 1500 \
     --out-dir /tmp/swing_out

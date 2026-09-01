@@ -6,10 +6,11 @@ Five minutes from `git clone` to first result.
 
 | Tool | Version | Why |
 | --- | --- | --- |
-| Python | ≥ 3.10 | MediaPipe's prebuilt wheels cap out at 3.12; this machine's 3.13 works fine |
+| Python | ≥ 3.10 | MediaPipe's prebuilt wheels cap out at 3.12; 3.13 works fine |
 | Node.js | ≥ 18 | Electron 31 + electron-vite |
 | Git | any | clone the repo |
 | ffmpeg | not needed | OpenCV bundles its own codec stack |
+| **mediapipe** | **== 0.10.35** (pinned in `backend/requirements.txt`) | MediaPipe **1.0** wheel has a regression on Apple Silicon that aborts in `TensorsToDetectionsCalculator::Open()`. See [07 · Troubleshooting](07-troubleshooting.md#apple-silicon-metal-delegate-regression). Don't `pip install --upgrade mediapipe` without re-reading that section. |
 
 ## 1. Clone
 
@@ -46,7 +47,7 @@ bash scripts/fetch-model.sh    # should print "已就位 …"
 
 ```bash
 # Use any short video you have
-python3 -m backend.cli \
+python3 -m backend.cli segment \
     --video /abs/path/to/your/video.mp4 \
     --max-frames 1500 \
     --out-dir /tmp/swing_out

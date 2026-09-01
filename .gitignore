@@ -32,9 +32,12 @@ electron-builder-cache/
 # ── python venv + runtime + build intermediates ────────────────────────
 backend/.venv/
 backend/data/                    # service.json, jobs/<id>/segments.json etc.
-# NOTE: backend/models/pose_landmarker_lite.task IS committed (5.5 MB;
-# fetched model lives next to the code so a fresh clone runs out of the box).
-# scripts/fetch-model.sh re-downloads only if missing.
+# Only pose_landmarker_lite.task is committed (5.5 MB; fetched model lives
+# next to the code so a fresh clone runs out of the box; scripts/fetch-model.sh
+# re-downloads only if missing). The 'heavy' variant (29 MB) and any other
+# .task experiments are intentionally NOT tracked.
+backend/models/*.task
+!backend/models/pose_landmarker_lite.task
 backend/cli_jobs/                # if CLI --out-dir points here
 __pycache__/
 *.pyc
@@ -55,3 +58,6 @@ htmlcov/
 .idea/
 .DS_Store
 *.swp
+*.mp4
+.testcase*
+test-results/

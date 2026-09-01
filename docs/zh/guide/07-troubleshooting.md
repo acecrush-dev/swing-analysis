@@ -123,6 +123,36 @@ bash scripts/fetch-model.sh
 里抽出来:
 `<venv>/lib/python3.X/site-packages/mediapipe/modules/pose_landmarker/pose_landmarker_lite.task`。
 
+## Apple Silicon Metal delegate 回归 (mediapipe 1.0)
+
+如果在 M 系列 Mac 上看到类似下面的 abort,**别去调视频 —— 不是你的错**:
+
+```
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+W  Feedback manager requires a model with a single signature inference.
+   Disabling support for feedback tensors.
+F  Check failed: service_ Service is unavailable.
+*** Check failure stack trace: ***
+    @  ... -[DrishtiMetalHelper initWithCalculatorContext:]
+    @  ... mediapipe::api2::TensorsToDetectionsCalculator::Open()
+    @  ... mediapipe::CalculatorNode::OpenNode()
+```
+
+根因:**mediapipe 1.0** 的 wheel 有个回归 —— `TensorsToDetectionsCalculator` 的图在 `Open()` 阶段会**无条件**初始化 Metal delegate helper,Apple 的 `DrishtiMetalHelper` 跑一个内部 sanity check(`service_ Service is unavailable.`)不过就 abort。在 Python 3.12.12 *和* 3.13.11 上都验证过崩 —— **Python 版本不是变量**。从 Google CDN 重拉模型(lite 或 heavy)没用 —— bug 在 wheel 里。
+
+**修法**(`requirements.txt` 里已经钉好):钉 `mediapipe==0.10.35`。这是 0.10.x 最后一个 release,没有 Metal init 这条路径,M 系列 Mac 上干净跑通(fdl.mp4 60 帧 smoke test ≈ 125 fps)。
+
+```bash
+# 不小心升过 1.0 了的话:
+backend/.venv/bin/pip install --upgrade --force-reinstall 'mediapipe==0.10.35'
+
+# 重跑前先验证:
+backend/.venv/bin/python -c "import mediapipe; print(mediapipe.__version__)"
+# 应该打: 0.10.35
+```
+
+**什么时候能解钉?** MediaPipe 1.0.x 修好 `TensorsToDetectionsCalculator::Open()` 那个 Metal-init sanity check 之后。盯着上游 issue,升到 1.x 后跑同一个 60 帧 demo.mp4 smoke test 不 abort,就把 `requirements.txt` 里的 `==0.10.35` 拿掉。在那之前 **别 `pip install --upgrade mediapipe`** —— 升之前先看这节。
+
 ## 明显动作多的视频却没 segment
 
 按这个顺序调:

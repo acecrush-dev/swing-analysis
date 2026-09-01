@@ -149,38 +149,76 @@ def run_pipeline(
     online_segments: List[core.SwingSegment] = []
 
     try:
-        skip = max(1, int(p["skip"]))
-        while frame_idx < limit:
-            if should_cancel and should_cancel():
-                raise JobCancelled("cancelled by user")
-            ok, frame = cap.read()
-            if not ok:
-                break
-            fidx = frame_idx
-            frame_idx += 1
+        try:
+            skip = max(1, int(p["skip"]))
+            while frame_idx < limit:
+                if should_cancel and should_cancel():
+                    raise JobCancelled("cancelled by user")
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                fidx = frame_idx
+                frame_idx += 1
 
-            if (fidx % skip) == 0:
-                det = pose.detect(frame, int(((fidx + 1) / fps) * 1000.0))
-                if det is not None:
-                    xs[fidx], ys[fidx] = det[0], det[1]
-                    n_valid += 1
-                    if sx is None:
-                        sx, sy = det[0], det[1]
+                if (fidx % skip) == 0:
+                    det = pose.detect(frame, int(((fidx + 1) / fps) * 1000.0))
+                    if det is not None:
+                        xs[fidx], ys[fidx] = det[0], det[1]
+                        n_valid += 1
+                        if sx is None:
+                            sx, sy = det[0], det[1]
+                        else:
+                            sx = sa * det[0] + (1 - sa) * sx
+                            sy = sa * det[1] + (1 - sa) * sy
                     else:
-                        sx = sa * det[0] + (1 - sa) * sx
-                        sy = sa * det[1] + (1 - sa) * sy
+                        sx, sy = None, None
                 else:
                     sx, sy = None, None
-            else:
-                sx, sy = None, None
 
-            if sx is not None and sy is not None and px is not None and py is not None:
-                v_now: Optional[float] = math.hypot(sx - px, sy - py) * fps
-            else:
-                v_now = None
-            px, py = sx, sy
+                if sx is not None and sy is not None and px is not None and py is not None:
+                    v_now: Optional[float] = math.hypot(sx - px, sy - py) * fps
+                else:
+                    v_now = None
+                px, py = sx, sy
 
-            seg = online_seg.update(fidx, v_now)
+                seg = online_seg.update(fidx, v_now)
+                if seg is not None:
+                    online_segments.append(seg)
+                    if on_segment is not None:
+                        on_segment(_seg_to_dict(seg))
+                    if clip_executor is not None:
+                        clips_dir = out_dir / "clips"
+                        clips_dir.mkdir(parents=True, exist_ok=True)
+                        clip_path = clips_dir / f"clip_{seg.seg_id:03d}.mp4"
+                        clip_executor.submit(
+                            _extract_and_maybe_annotate,
+                            video_path, seg, clips_dir, fps, width, height,
+                            annotator, p["clip_bbox"], p["clip_skel"], p["skel_backend"],
+                            on_clip_annotated,
+                        )
+
+                if progress_cb is not None:
+                    elapsed = max(time.time() - t0, 1e-6)
+                    fps_now = frame_idx / elapsed
+                    remaining = (limit - frame_idx) / max(fps_now, 1e-6)
+                    if not (remaining == remaining) or remaining == float("inf") or remaining > 86400 * 30:
+                        eta_s: Optional[float] = None
+                    else:
+                        eta_s = max(0.0, remaining)
+                    progress_cb({
+                        "phase": "pose",
+                        "frames": frame_idx,
+                        "total": limit,
+                        "fps": fps_now,
+                        "eta_sec": eta_s,
+                        "segments_emitted": len(online_segments),
+                    })
+        finally:
+            cap.release()
+
+        # flush -- runs after the loop, before the executor shuts down.
+        try:
+            seg = online_seg.flush(frame_idx)
             if seg is not None:
                 online_segments.append(seg)
                 if on_segment is not None:
@@ -195,43 +233,20 @@ def run_pipeline(
                         annotator, p["clip_bbox"], p["clip_skel"], p["skel_backend"],
                         on_clip_annotated,
                     )
-
-            if progress_cb is not None:
-                elapsed = max(time.time() - t0, 1e-6)
-                fps_now = frame_idx / elapsed
-                remaining = (limit - frame_idx) / max(fps_now, 1e-6)
-                if not (remaining == remaining) or remaining == float("inf") or remaining > 86400 * 30:
-                    eta_s: Optional[float] = None
-                else:
-                    eta_s = max(0.0, remaining)
-                progress_cb({
-                    "phase": "pose",
-                    "frames": frame_idx,
-                    "total": limit,
-                    "fps": fps_now,
-                    "eta_sec": eta_s,
-                    "segments_emitted": len(online_segments),
-                })
+        finally:
+            # Shutdown the executor LAST (and only once). It MUST be after
+            # flush() so a segment emitted by flush() can still submit.
+            if clip_executor is not None:
+                clip_executor.shutdown(wait=True)
     finally:
-        cap.release()
+        # Outer safety net: if the loop itself raised (e.g. JobCancelled
+        # from should_cancel()) and we skipped flush() entirely, still
+        # shut down the executor so it doesn't leak threads. The inner
+        # flush-finally above already shut it down on the happy path;
+        # shutdown() is idempotent so a second call is a no-op.
         if clip_executor is not None:
             clip_executor.shutdown(wait=True)
 
-    # flush
-    seg = online_seg.flush(frame_idx)
-    if seg is not None:
-        online_segments.append(seg)
-        if on_segment is not None:
-            on_segment(_seg_to_dict(seg))
-        if clip_executor is not None:
-            clips_dir = out_dir / "clips"
-            clips_dir.mkdir(parents=True, exist_ok=True)
-            clip_executor.submit(
-                _extract_and_maybe_annotate,
-                video_path, seg, clips_dir, fps, width, height,
-                annotator, p["clip_bbox"], p["clip_skel"], p["skel_backend"],
-                on_clip_annotated,
-            )
 
     detected_pct = 100.0 * n_valid / max(frame_idx, 1)
 
