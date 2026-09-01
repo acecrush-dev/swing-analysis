@@ -4,11 +4,10 @@
 
 ## 这是什么?
 
-`swing-analysis` 把已经实测验证的网球挥拍自动切分管线 (最初在
-[`ace-crush-lab`](https://github.com/leochan007/ace-crush-lab) 里开发)
-包装成可服务化的 Python 后端,UI 层完全可插拔。算法 **byte-for-byte 原样
-拷贝** 到 `backend/core/segment_swing.py` —— 不修改、不留惊喜。上游算法
-更新时,直接 `cp` 进来就行。
+`swing-analysis` 把已经实测验证的网球挥拍自动切分管线包装成可服务化
+的 Python 后端,UI 层完全可插拔。三个算法脚本 **byte-for-byte 原样拷
+贝** 到 `backend/core/` —— 不修改、不留惊喜。底层源更新时,直接 `cp`
+进来就行。
 
 仓库一次性交付三件东西:
 
@@ -50,8 +49,8 @@
                                  移动端 / curl
 ```
 
-- **Vendor 优先**。算法库从上游原样拷,拷进来后**一行不改**。本仓库跟上
-  游的漂移用 `cp` 解决,不用手工 merge
+- **Vendor 优先**。算法库从底层源原样拷,拷进来后**一行不改**。本仓库
+  跟底层源的漂移用 `cp` 解决,不用手工 merge
 - **Pipeline 是接缝**。`run_pipeline()` 是唯一接触算法的函数。它接回调
   (`progress_cb` / `on_segment` / `should_cancel`),不直接写终端。HTTP
   服务和 CLI 都调它
@@ -75,7 +74,10 @@ CLI 是一种 UI。HTTP 服务是一种 UI。Electron 应用也是一种 UI。�
 
 ```
 backend/
-  core/segment_swing.py    ← vendored,严禁编辑
+  core/
+    segment_swing.py        ← vendored,严禁编辑 (右手腕信号切分)
+    analyze_swing.py        ← vendored,严禁编辑 (33 点 + clip 叠加)
+    gen_skeleton_anim.py    ← vendored,严禁编辑 (RTMDet + RTMPose / MP)
   service/
     pipeline.py            ← run_pipeline():接缝函数
     jobs.py                ← JobManager + WS 广播
@@ -88,9 +90,13 @@ src/
   main/index.ts            ← PythonSidecar 生命周期
   preload/index.ts         ← contextBridge
   renderer/                ← React UI
-scripts/fetch-model.sh     ← 兜底下载器
+scripts/fetch-model.sh     ← MediaPipe CDN 兜底下载器
 docs/                      ← 你在这里
 ```
+
+`backend/core/` 下的三个 vendored 脚本也可独立运行 —— 见
+[02 · 架构](guide/02-architecture.md#l1--算法-backendcore) 和
+[03 · CLI 用法](guide/03-cli-usage.md)。
 
 ## 验收剧本
 

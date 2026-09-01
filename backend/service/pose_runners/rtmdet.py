@@ -1,6 +1,9 @@
 """RTMDet — pure ONNX person detector.
 
-Vendored from ace-crush-lab/app/scripts/gen_skeleton_anim.py.
+The detection topology (letterbox, label filter, score-threshold) lives in
+`backend/core/gen_skeleton_anim.py`; this module is the ONNX-runtime binding
+that exposes a stateless per-frame `detect()`.
+
 Input: BGR frame (numpy H×W×3).
 Output: List[BBox] sorted by score descending.
 

@@ -5,11 +5,10 @@
 ## What is this?
 
 `swing-analysis` wraps a battle-tested tennis-swing auto-segmentation pipeline
-(originally developed in [`ace-crush-lab`](https://github.com/leochan007/ace-crush-lab))
-into a serviceable Python backend with a pluggable UI layer. The algorithm is
-**vendored byte-for-byte** into `backend/core/segment_swing.py` — no
-modifications, no surprises. When upstream improves the algorithm, you
-literally `cp` the new file in.
+into a serviceable Python backend with a pluggable UI layer. Three algorithm
+scripts are **vendored byte-for-byte** into `backend/core/` — no
+modifications, no surprises. When the underlying source improves, you
+literally `cp` the new files in.
 
 The repository ships three deliverables:
 
@@ -53,9 +52,9 @@ The repository ships three deliverables:
                                  mobile / curl
 ```
 
-- **Vendor first.** Algorithm library is copied verbatim from upstream; no
-  edits inside the vendored copy. Drift between this repo and upstream is
-  resolved by `cp`, not by hand-merging.
+- **Vendor first.** Algorithm libraries are copied verbatim into `backend/core/`;
+  no edits inside the vendored copy. Drift between this repo and the
+  underlying source is resolved by `cp`, not by hand-merging.
 - **Pipeline as the seam.** `run_pipeline()` is the only function that touches
   the algorithm. It takes callbacks (`progress_cb`, `on_segment`,
   `should_cancel`) instead of writing to a terminal. The HTTP service and the
@@ -82,7 +81,10 @@ Decoupling at this seam gives you:
 
 ```
 backend/
-  core/segment_swing.py    ← vendored, do NOT edit
+  core/
+    segment_swing.py        ← vendored, do NOT edit (wrist-signal cut)
+    analyze_swing.py        ← vendored, do NOT edit (33-point + clips)
+    gen_skeleton_anim.py    ← vendored, do NOT edit (RTMDet + RTMPose / MP)
   service/
     pipeline.py            ← run_pipeline(): the seam
     jobs.py                ← JobManager + WS broadcast
@@ -95,9 +97,13 @@ src/
   main/index.ts            ← PythonSidecar lifecycle
   preload/index.ts         ← contextBridge
   renderer/                ← React UI
-scripts/fetch-model.sh     ← fallback downloader
+scripts/fetch-model.sh     ← MediaPipe CDN fallback downloader
 docs/                      ← you are here
 ```
+
+The three vendored scripts in `backend/core/` are also independently
+runnable — see [02 · Architecture](guide/02-architecture.md#l1--algorithm-backendcore)
+and [03 · CLI Usage](guide/03-cli-usage.md).
 
 ## Verification recipe
 

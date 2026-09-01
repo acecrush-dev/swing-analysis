@@ -54,8 +54,8 @@ def _default_mp_task_path() -> Path:
 
 
 # Minimal MediaPipe-33 skeleton for the annotation path. The pipeline's
-# own viz.mp4 uses the full topology from core; we only need a basic one
-# for clip overlays. (Detailed topology lives in `ace-crush-lab/gen_skeleton_anim.py`.)
+# own viz.mp4 uses the full topology from core/gen_skeleton_anim.py; we
+# only need a basic one here for clip overlays.
 _MP_33_SKELETON = [
     # arms
     (11, 13), (13, 15), (12, 14), (14, 16),

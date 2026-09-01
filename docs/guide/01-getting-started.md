@@ -36,8 +36,7 @@ pip3 install -r backend/requirements.txt
 
 The model is **already in the repo** at `backend/models/pose_landmarker_lite.task`
 (5.5 MB). The `scripts/fetch-model.sh` script is a fallback for the rare case
-you lose it — it will copy from `ace-crush-lab` if you have it locally, or
-download from MediaPipe's CDN.
+you lose it — it downloads from MediaPipe's official CDN.
 
 ```bash
 bash scripts/fetch-model.sh    # should print "已就位 …"
@@ -46,7 +45,7 @@ bash scripts/fetch-model.sh    # should print "已就位 …"
 ## 4. Smoke test (no service)
 
 ```bash
-# Use any short video you have; fdl.mp4 from ace-crush-lab is the canonical test
+# Use any short video you have
 python3 -m backend.cli \
     --video /abs/path/to/your/video.mp4 \
     --max-frames 1500 \
@@ -54,6 +53,31 @@ python3 -m backend.cli \
 
 # expect: ✓ 完成: 检测到 N 个完整挥拍周期 + JSON: /tmp/swing_out/segments.json
 ```
+
+## 4b. Run a single vendored algorithm directly
+
+The three scripts under `backend/core/` are independently runnable — no
+service, no pipeline shell, no Electron. Useful when you want one stage
+without the full orchestration:
+
+```bash
+# MediaPipe 33-point once → segments + skel clips + full-video viz
+python3 backend/core/analyze_swing.py \
+    --file /abs/match.mp4 \
+    --save-clips --skel-clips --viz-full
+
+# RTMDet bbox + RTMPose 13-point skeleton, four-quadrant compositor
+python3 backend/core/gen_skeleton_anim.py \
+    --file /abs/match.mp4 \
+    --det-model rtmdet-m-487628.onnx \
+    --pose-model rtmpose-m-27c0e6.onnx
+
+# Just the wrist-signal cut pipeline (same as `backend.cli segment`)
+python3 backend/core/segment_swing.py --file /abs/match.mp4 --max-frames 1500
+```
+
+See [02 · Architecture](02-architecture.md#l1--algorithm-backendcore) for what
+each script is responsible for.
 
 ## 5. Run as a service
 

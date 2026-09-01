@@ -35,7 +35,7 @@ pip3 install -r backend/requirements.txt
 
 模型**已经在仓库里**了 —— `backend/models/pose_landmarker_lite.task`
 (5.5 MB)。`scripts/fetch-model.sh` 是兜底脚本,极少数情况下文件丢了,它
-会从 `ace-crush-lab` 拷一份,或者从 MediaPipe CDN 下载。
+从 MediaPipe 官方 CDN 下载。
 
 ```bash
 bash scripts/fetch-model.sh    # 应该打 "已就位 …"
@@ -44,7 +44,7 @@ bash scripts/fetch-model.sh    # 应该打 "已就位 …"
 ## 4. 烟雾测试 (不开服务)
 
 ```bash
-# 用你手头任何短片; fdl.mp4 是上游 ace-crush-lab 的标准测试
+# 用你手头任何短片
 python3 -m backend.cli \
     --video /abs/path/to/your/video.mp4 \
     --max-frames 1500 \
@@ -52,6 +52,29 @@ python3 -m backend.cli \
 
 # 期望: ✓ 完成: 检测到 N 个完整挥拍周期 + JSON: /tmp/swing_out/segments.json
 ```
+
+## 4b. 直接跑单个 vendored 算法
+
+`backend/core/` 下的三个脚本都能独立运行 —— 不需要服务、不需要 pipeline
+壳、不需要 Electron。想要单个阶段而不要全套编排时很合适:
+
+```bash
+# MediaPipe 一次跑完 33 点 → 切分 + 带骨架的 clip + 整段 viz
+python3 backend/core/analyze_swing.py \
+    --file /abs/match.mp4 \
+    --save-clips --skel-clips --viz-full
+
+# RTMDet 人物框 + RTMPose 13 点骨架,四象限合成器
+python3 backend/core/gen_skeleton_anim.py \
+    --file /abs/match.mp4 \
+    --det-model rtmdet-m-487628.onnx \
+    --pose-model rtmpose-m-27c0e6.onnx
+
+# 只跑腕信号切分管线 (跟 `backend.cli segment` 同款)
+python3 backend/core/segment_swing.py --file /abs/match.mp4 --max-frames 1500
+```
+
+每个脚本各管什么见 [02 · 架构](02-architecture.md#l1--算法-backendcore)。
 
 ## 5. 起服务
 

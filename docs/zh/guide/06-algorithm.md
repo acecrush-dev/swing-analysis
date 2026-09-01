@@ -1,8 +1,7 @@
 # 06 · 算法原理
 
-切分管线是 `ace-crush-lab` 的 v2.1。本章讲每一阶段做什么、v2 为何存
-在、哪些参数调起来最有效。`backend/core/segment_swing.py` 是真理之源
-—— 逐行细节看那里。
+切分管线是 v2.1。本章讲每一阶段做什么、v2 为何存在、哪些参数调起来
+最有效。`backend/core/segment_swing.py` 是真理之源 —— 逐行细节看那里。
 
 ## v2 的来历
 
@@ -124,9 +123,9 @@ def extract_one_clip(in_path, seg, clips_dir, fps, w, h): ...
 def phase_timeline(seg, fps) -> List[Tuple[str, int, int]]: ...
 ```
 
-`backend/service/pipeline.py` 是唯一调用方。如果上游 `ace-crush-lab`
-加新函数 (比如 `dedup_overlapping` 或 `score_swing_quality`),拷进来
-就行;其它地方不用知道。
+`backend/service/pipeline.py` 是唯一调用方。如果底层源加新函数 (比
+如 `dedup_overlapping` 或 `score_swing_quality`),拷进来就行;其它地方
+不用知道。
 
 ## 跑在哪些模型上
 
@@ -140,19 +139,33 @@ def phase_timeline(seg, fps) -> List[Tuple[str, int, int]]: ...
 
 切分算法本身 (`backend/core/segment_swing.py`) 只 import MediaPipe Pose
 模型。RTMDet 和 RTMPose 仅供 `ClipAnnotator` 给已切好的 clip 做增强,
-**不参与** segmentation。这让算法库保持不变,vendor 规矩("上游更
-新就重拷")继续适用。
+**不参与** segmentation。这让算法库保持不变,vendor 规矩("更新就重
+拷")继续适用。
 
-## 同步上游
+## 从底层源同步
 
 ```bash
-# 看上游变化
-git -C /path/to/ace-crush-lab log --oneline app/scripts/segment_swing.py
-
-# 拉指定 upstream commit
-cp /path/to/ace-crush-lab/app/scripts/segment_swing.py backend/core/segment_swing.py
-git add backend/core/segment_swing.py
-git commit -m "vendor: sync segment_swing.py from upstream @ <hash>"
+# 一次同步三个 vendored 算法脚本
+cp <新-segment_swing.py>     backend/core/segment_swing.py
+cp <新-analyze_swing.py>     backend/core/analyze_swing.py
+cp <新-gen_skeleton_anim.py> backend/core/gen_skeleton_anim.py
+git add backend/core/
+git commit -m "vendor: 从底层源同步 @ <hash>"
 ```
 
 完事。不用审"本地有没有人偷偷改过",因为文件就是 verbatim 提交的。
+
+## 另外两个 vendored 算法
+
+`backend/core/` 除了 `segment_swing.py`,还有两个独立的算法:
+
+- **`analyze_swing.py`** —— MediaPipe 一次推理的 33 点分析。wrist 喂
+  同一个 `OnlineSegmenter`,33 点按帧缓存,clip 叠加和整段 `viz.mp4`
+  与切分列表保证 1:1。不会再有"5 vs 11 段"那种在线/离线 race
+
+- **`gen_skeleton_anim.py`** —— RTMDet (bbox) + RTMPose / MediaPipe
+  (骨架) 四象限合成器,带智能裁剪放大。要做一段独立的骨架叠加视频
+  时用它,跟切分无关
+
+两个都能独立跑 CLI —— 参数和产物形状见
+[03 · CLI 用法](03-cli-usage.md#独立-vendored-算法-cli)。

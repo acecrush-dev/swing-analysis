@@ -78,9 +78,8 @@ See [06 · Algorithm](06-algorithm.md) for the meaning of each in context.
 └── viz.mp4                    # only with --viz-video
 ```
 
-`segments.json` is byte-for-byte compatible with the CLI version of
-`ace-crush-lab/app/scripts/segment_swing.py` — same keys, same units, same
-phase schema.
+`segments.json` schema is the same as what `backend/core/segment_swing.py`
+emits when run standalone — same keys, same units, same phase schema.
 
 ### Examples
 
@@ -179,3 +178,83 @@ exploration).
 `annotate` is also exposed standalone because clip enrichment is useful as
 a post-hoc step — re-run it on the same clips with different flags
 without re-doing segmentation.
+
+## Standalone vendored algorithm CLIs
+
+The three scripts in `backend/core/` are independently runnable. Useful
+when you want exactly one stage without the pipeline / service shell.
+
+### `backend/core/analyze_swing.py`
+
+The unified MediaPipe 33-point CLI. Runs once over the video with full
+keypoints, then:
+
+- writes `segments.json` (same schema as `segment`),
+- optionally writes raw clips with `--save-clips`,
+- optionally writes skeleton-overlay clips with `--skel-clips`,
+- optionally writes a full-video `viz.mp4` (skeleton + cycle bars + bottom
+  phase square-wave) with `--viz-full`.
+
+```bash
+python3 backend/core/analyze_swing.py \
+    --file /abs/match.mp4 \
+    --save-clips --skel-clips --viz-full
+```
+
+Why it guarantees 1:1 with the segments list: wrist + 33 points come from
+the *same* MediaPipe inference per frame, and the segmentation step uses
+the offline `segment_cycles()` over the full keypoint buffer — so clip
+indices and segment indices always line up regardless of clip-race
+conditions.
+
+### `backend/core/gen_skeleton_anim.py`
+
+RTMDet (bbox) + RTMPose / MediaPipe (skeleton) four-quadrant compositor.
+No swing detection — just an overlay video.
+
+| Quadrant | `--det-model` | `--pose-model` | Output |
+| --- | --- | --- | --- |
+| 1 | `.onnx` (RTMDet) | `.onnx` (RTMPose) | Classic ONNX pipeline, smart-zoom |
+| 2 | `.onnx` (RTMDet) | `.task` (MediaPipe) | Hybrid — RTMDet ROI + MediaPipe 33-pt |
+| 3 | `.onnx` (RTMDet) | (none / `--no-pose`) | Bbox-only |
+| 4 | (none) | `.onnx` / `.task` | Full-frame pose, no ROI |
+
+```bash
+# Quadrant 1 — classic ONNX pipeline
+python3 backend/core/gen_skeleton_anim.py \
+    --file /abs/match.mp4 \
+    --det-model rtmdet-m-487628.onnx \
+    --pose-model rtmpose-m-27c0e6.onnx
+
+# Quadrant 2 — hybrid (RTMDet bbox + MediaPipe 33-point skeleton)
+python3 backend/core/gen_skeleton_anim.py \
+    --file /abs/match.mp4 \
+    --det-model rtmdet-m-487628.onnx \
+    --pose-model pose_landmarker_lite.task
+
+# Quadrant 4b — MediaPipe full-frame, no RTMDet
+python3 backend/core/gen_skeleton_anim.py \
+    --file /abs/match.mp4 \
+    --pose-model pose_landmarker_lite.task
+```
+
+The output filename defaults to `<input>_skeleton_anim.mp4` next to the
+input (the input is never overwritten — there's an explicit check).
+
+### `backend/core/segment_swing.py`
+
+Same algorithm that `backend.cli segment` wraps, run directly. Use this
+when you want cut-only output and don't care about the Electron GUI's
+clip / viz annotations:
+
+```bash
+python3 backend/core/segment_swing.py \
+    --file /abs/match.mp4 \
+    --max-frames 1500 \
+    --out-dir /tmp/swing_out
+```
+
+Output goes to `<out-dir>/swing_segmenter/` (default behaviour of the
+standalone script). For the service / CLI-friendly output shape, use
+`backend.cli segment` instead — it emits to `backend/data/cli_jobs/<id>/`
+with the same shape the REST service uses.

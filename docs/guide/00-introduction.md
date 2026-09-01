@@ -17,7 +17,8 @@ and pre-cut clip MP4s.
 
 - **No shot-quality scoring.** This is segmentation, not analysis. Whether
   the forehand was technically correct is a separate, downstream problem
-  (see `analyze_swing.py` in the upstream `ace-crush-lab` repo for that).
+  (see [`backend/core/analyze_swing.py`](../../backend/core/analyze_swing.py) —
+  it draws the 33-point skeleton and clips but does not score shots).
 - **No cloud service.** Everything runs locally on your machine. The
   FastAPI service binds to `127.0.0.1` by default. Opening it up to a LAN
   is `Phase C` work.
@@ -38,11 +39,11 @@ and pre-cut clip MP4s.
 
 Two principles:
 
-1. **The algorithm library is sacred.** It is vendored byte-for-byte from
-   `ace-crush-lab/app/scripts/segment_swing.py`. Any change must come from
-   upstream first. This guarantees that any "fix" you make here will be in
-   sync with every other consumer of the same code (e.g. the Flutter mobile
-   app in the upstream repo).
+1. **The algorithm library is sacred.** All three scripts in `backend/core/`
+   are vendored byte-for-byte — `segment_swing.py`, `analyze_swing.py`,
+   `gen_skeleton_anim.py`. Any change must come from the underlying source
+   first, then be re-copied. This guarantees that any "fix" you make here
+   is reproducible from a single `cp`.
 
 2. **UIs are replaceable.** A CLI is a UI. A desktop app is a UI. A browser
    tab is a UI. They all want to do the same thing — submit a job, watch
@@ -57,8 +58,10 @@ debt.
 
 - You need real-time pose tracking (this is offline batch — Pass 1 + 1.5
   takes ~1s per frame on M-series Mac).
-- You want the analysis output (joint angles, swing classification). Use
-  `ace-crush-lab/app/scripts/analyze_swing.py` instead.
+- You want a polished standalone skeleton animation video with smart-zoom
+  cropping (no swing detection, just the overlay). Run
+  `python3 backend/core/gen_skeleton_anim.py --help` directly — it's the
+  same algorithm, but packaged for animation-only use.
 - You want a hosted web app. This is local-first by design; Phase C sketches
   a self-hosted option but it's not built.
 

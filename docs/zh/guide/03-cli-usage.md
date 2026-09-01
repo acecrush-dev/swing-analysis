@@ -77,8 +77,8 @@ python3 -m backend.cli segment --video <abs-or-rel.mp4> [options]
 └── viz.mp4                    # 仅 --viz-video
 ```
 
-`segments.json` 与 `ace-crush-lab/app/scripts/segment_swing.py` 的 CLI 版
-本**字节级兼容** —— 同 key、同单位、同 phase schema。
+`segments.json` schema 跟 `backend/core/segment_swing.py` 独立跑出来的一
+样 —— 同 key、同单位、同 phase schema。
 
 ### 例子
 
@@ -174,3 +174,76 @@ python3 -m backend.cli annotate \
 
 `annotate` 也单独暴露,因为 clip 增强作为**后处理**步骤很有用 —— 用不
 同 flags 重跑同一组 clips,不用重新 segmentation。
+
+## 独立 vendored 算法 CLI
+
+`backend/core/` 下的三个脚本都能独立运行。想要单个阶段而不要全套
+pipeline / 服务壳时很合适。
+
+### `backend/core/analyze_swing.py`
+
+统一的 MediaPipe 33 点 CLI。一次跑完视频的全 33 点,然后:
+
+- 写 `segments.json` (跟 `segment` 同 schema)
+- 加 `--save-clips` 写原始 clip
+- 加 `--skel-clips` 写带骨架叠加的 clip
+- 加 `--viz-full` 写整段 `viz.mp4` (骨架 + 周期条 + 底部相位方波)
+
+```bash
+python3 backend/core/analyze_swing.py \
+    --file /abs/match.mp4 \
+    --save-clips --skel-clips --viz-full
+```
+
+为什么保证与切分列表 1:1:wrist + 33 点都来自**同一帧**的 MediaPipe 推理,
+切分阶段用离线 `segment_cycles()` 跑完整关键点缓冲 —— clip 序号跟
+segment 序号永远对得上,跟在线/离线之间的 race 无关。
+
+### `backend/core/gen_skeleton_anim.py`
+
+RTMDet (bbox) + RTMPose / MediaPipe (骨架) 四象限合成器。不做切分,
+纯叠加。
+
+| 象限 | `--det-model` | `--pose-model` | 输出 |
+| --- | --- | --- | --- |
+| 1 | `.onnx` (RTMDet) | `.onnx` (RTMPose) | 经典 ONNX 流水线,智能裁剪 |
+| 2 | `.onnx` (RTMDet) | `.task` (MediaPipe) | 混合 —— RTMDet 给 ROI,MediaPipe 给 33 点 |
+| 3 | `.onnx` (RTMDet) | (无 / `--no-pose`) | 只画人框 |
+| 4 | (无) | `.onnx` / `.task` | 全帧姿态,无 ROI |
+
+```bash
+# 象限 1 —— 经典 ONNX 流水线
+python3 backend/core/gen_skeleton_anim.py \
+    --file /abs/match.mp4 \
+    --det-model rtmdet-m-487628.onnx \
+    --pose-model rtmpose-m-27c0e6.onnx
+
+# 象限 2 —— 混合 (RTMDet 框 + MediaPipe 33 点骨架)
+python3 backend/core/gen_skeleton_anim.py \
+    --file /abs/match.mp4 \
+    --det-model rtmdet-m-487628.onnx \
+    --pose-model pose_landmarker_lite.task
+
+# 象限 4b —— MediaPipe 全帧,不用 RTMDet
+python3 backend/core/gen_skeleton_anim.py \
+    --file /abs/match.mp4 \
+    --pose-model pose_landmarker_lite.task
+```
+
+输出文件名默认 `<输入>_skeleton_anim.mp4`,落在输入旁 (输入永远不被覆
+盖 —— 有显式检查)。
+
+### `backend/core/segment_swing.py`
+
+跟 `backend.cli segment` 包的是同一份算法,直接跑。仅切分、不想要
+Electron GUI 那套 clip / viz 标注时用它:
+
+```bash
+python3 backend/core/segment_swing.py \
+    --file /abs/match.mp4 \
+    --max-frames 1500 \
+    --out-dir /tmp/swing_out
+```
+
+产物落在 `<out-dir>/swing_segmenter/` (脚本默认)。想要跟 REST 服务一致
+的目录形状,用 `backend.cli segment` —— 它落 `backend/data/cli_jobs/<id>/`。

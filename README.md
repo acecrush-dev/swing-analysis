@@ -6,9 +6,9 @@
 **English** | [简体中文](README.zh-CN.md)
 
 Desktop tennis-swing auto-segmentation. Wraps a battle-tested cutting pipeline
-into a serviceable Python backend with a pluggable UI — the algorithm is
-**vendored byte-for-byte** from [`ace-crush-lab`](https://github.com/leochan007/ace-crush-lab)
-(zero algorithm changes), so upstream fixes flow in with a single `cp`.
+into a serviceable Python backend with a pluggable UI — the algorithm core is
+**vendored byte-for-byte** in `backend/core/` (zero algorithm changes),
+re-copied when the underlying source changes.
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -28,9 +28,11 @@ into a serviceable Python backend with a pluggable UI — the algorithm is
 └────────────────────────┬─────────────────────────────────┘
                          │  (no algorithm changes)
 ┌────────────────────────▼─────────────────────────────────┐
-│ core/segment_swing.py                                    │
-│  (vendored from ace-crush-lab/app/scripts/, byte-for-    │
-│   byte — re-copy on upstream changes)                    │
+│ core/  — three independent vendored algorithms            │
+│  segment_swing.py        v2.1 wrist-signal cut pipeline  │
+│  analyze_swing.py        MediaPipe 33-point once + skel  │
+│  gen_skeleton_anim.py    RTMDet + RTMPose / MediaPipe    │
+│                          four-quadrant skeleton animator │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -45,7 +47,7 @@ into a serviceable Python backend with a pluggable UI — the algorithm is
 - **🚀 On-the-fly emit** — segments appear in the UI as Pass 1 streams, not after the full video is done
 - **🔌 Three pluggable UIs** — terminal, Electron desktop, future browser / mobile, all sharing one REST + WebSocket contract
 - **🎛 Three pluggable models** — MediaPipe Pose for segmentation; RTMDet + RTMPose (or MediaPipe) for optional clip bbox + skeleton overlays
-- **📦 Self-contained** — vendored algorithm + three committed models (≈160 MB) → clone-and-run, no PyPI dance for the model
+- **📦 Self-contained** — three vendored algorithms + three committed models (≈160 MB) → clone-and-run, no PyPI dance for the model
 - **🎬 Native video seek** — the GUI plays the *original* video via HTTP Range, sidesteps the cv2 `mp4v` codec that Chromium cannot decode
 - **🧩 Pure modules, composed at the pipeline layer** — segmentation, detection, and pose are independent functions; you can run them together, or in any order, on the same clips
 
@@ -61,6 +63,14 @@ python3 -m backend.cli segment --video /abs/match.mp4 --save-clips --clip-bbox -
 # CLI — post-hoc annotation of already-cut clips
 python3 -m backend.cli annotate --clips-dir backend/data/jobs/<id>/clips --bbox --skel
 
+# Standalone algorithm CLIs (in backend/core/) — run a single stage without
+# the service / pipeline shell:
+python3 backend/core/analyze_swing.py \
+    --file /abs/match.mp4 --save-clips --skel-clips --viz-full
+python3 backend/core/gen_skeleton_anim.py \
+    --file /abs/match.mp4 --det-model rtmdet-m-487628.onnx \
+    --pose-model rtmpose-m-27c0e6.onnx
+
 # REST service — for Electron / browser / any client
 python3 -m backend.service --port 8321
 # stdout last line: SWING_SERVICE_URL=http://127.0.0.1:8321
@@ -68,6 +78,18 @@ python3 -m backend.service --port 8321
 # Electron GUI — full desktop app
 npm install && npm run dev
 ```
+
+## The three vendored algorithms
+
+`backend/core/` ships three independent, byte-for-byte vendored scripts.
+Each is runnable on its own (no service / no Electron required) and is also
+importable as a library:
+
+| Script | What it does | Use it when |
+| --- | --- | --- |
+| `backend/core/segment_swing.py` | Pass-1 online + Pass-1.5 offline cut pipeline. Single signal: right wrist (MediaPipe idx 16). Emits `SwingSegment` with `ready / windup / contact / follow_through` phases. | You want the cut list and nothing else. This is what `backend.cli segment` wraps. |
+| `backend/core/analyze_swing.py` | MediaPipe once → 33 points. Wrist feeds `segment_swing`'s `OnlineSegmenter`; the 33 points are stored per frame so clip overlays and the full-video `viz.mp4` are guaranteed 1:1 with the segments list. | You want every clip and the full video with a 33-point skeleton overlay, all in one run. |
+| `backend/core/gen_skeleton_anim.py` | RTMDet (bbox) + RTMPose / MediaPipe (skeleton) four-quadrant compositor. Optional smart-zoom cropping driven by RTMDet person detection, stable ROI smoother, and auto-sizing. | You want a polished skeleton animation video independent of swing detection (no segments, just the overlay). |
 
 ## Documentation
 

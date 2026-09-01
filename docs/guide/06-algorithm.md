@@ -1,9 +1,9 @@
 # 06 · Algorithm
 
-The cutting pipeline is `v2.1` from `ace-crush-lab`. This chapter explains
-*what* each phase does, *why* v2 exists at all, and *which* parameters
-matter most for tuning. The implementation in `backend/core/segment_swing.py`
-is the source of truth — read it for the line-level details.
+The cutting pipeline is `v2.1`. This chapter explains *what* each phase
+does, *why* v2 exists at all, and *which* parameters matter most for
+tuning. The implementation in `backend/core/segment_swing.py` is the
+source of truth — read it for the line-level details.
 
 ## Why v2?
 
@@ -134,10 +134,10 @@ def extract_one_clip(in_path, seg, clips_dir, fps, w, h): ...
 def phase_timeline(seg, fps) -> List[Tuple[str, int, int]]: ...
 ```
 
-The pipeline in `backend/service/pipeline.py` is the only caller. If
-upstream `ace-crush-lab` adds a new function (e.g. `dedup_overlapping`
-or `score_swing_quality`), it lands here by copy-paste; nothing else
-needs to know.
+The pipeline in `backend/service/pipeline.py` is the only caller. If the
+underlying source adds a new function (e.g. `dedup_overlapping` or
+`score_swing_quality`), it lands here by copy-paste; nothing else needs
+to know.
 
 ## Models at play
 
@@ -153,19 +153,35 @@ The segmentation algorithm itself (`backend/core/segment_swing.py`) only
 imports the MediaPipe Pose model. RTMDet and RTMPose are exclusively used
 by the `ClipAnnotator` to enrich already-cut clips — they do **not**
 participate in segmentation. This keeps the algorithm library untouched
-and the same vendoring rule ("re-copy on upstream") applies.
+and the same vendoring rule ("re-copy on update") applies.
 
-## Syncing from upstream
+## Syncing from the underlying source
 
 ```bash
-# Watch for changes
-git -C /path/to/ace-crush-lab log --oneline app/scripts/segment_swing.py
-
-# Pull a specific upstream commit
-cp /path/to/ace-crush-lab/app/scripts/segment_swing.py backend/core/segment_swing.py
-git add backend/core/segment_swing.py
-git commit -m "vendor: sync segment_swing.py from upstream @ <hash>"
+# Re-vendor the three algorithm scripts in one go
+cp <new-segment_swing.py>     backend/core/segment_swing.py
+cp <new-analyze_swing.py>     backend/core/analyze_swing.py
+cp <new-gen_skeleton_anim.py> backend/core/gen_skeleton_anim.py
+git add backend/core/
+git commit -m "vendor: sync from underlying source @ <hash>"
 ```
 
 That's it. No review of "did we accidentally change something locally",
-because the file is committed verbatim.
+because the files are committed verbatim.
+
+## The other two vendored algorithms
+
+`backend/core/` ships two more independent algorithms alongside `segment_swing.py`:
+
+- **`analyze_swing.py`** — single-pass MediaPipe 33-point analysis. Wrist
+  feeds the same `OnlineSegmenter`; the 33 points are kept per frame so
+  clip overlays and full-video `viz.mp4` are guaranteed 1:1 with the
+  segments list. No more "5 vs 11 segments" race between online and
+  offline passes.
+- **`gen_skeleton_anim.py`** — RTMDet (bbox) + RTMPose / MediaPipe
+  (skeleton) four-quadrant compositor with smart-zoom cropping. Use when
+  you want a polished overlay video independent of swing detection.
+
+Both are runnable as standalone CLIs — see
+[03 · CLI Usage](03-cli-usage.md#standalone-vendored-algorithm-clis) for
+their flags and output shapes.

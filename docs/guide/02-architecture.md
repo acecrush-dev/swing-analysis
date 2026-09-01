@@ -48,14 +48,24 @@ sub-command composes them standalone.
 
 ### L1 — Algorithm (`backend/core/`)
 
-- `segment_swing.py` (952 lines) — vendored verbatim from
-  `ace-crush-lab/app/scripts/segment_swing.py`. Exposes `PoseRunner`,
-  `OnlineSegmenter`, `segment_cycles`, `bridge_gaps`, `ema_smooth`,
-  `compute_velocity_2d`, `extract_one_clip`, `phase_timeline`,
-  `SwingSegment`, `_frames_to_tc`.
-- `pose_landmarker_lite.task` (5.5 MB) — MediaPipe Pose model, committed.
-- `rtmdet-m-487628.onnx` (104 MB) — RTMDet person detector, committed.
-- `rtmpose-m-27c0e6.onnx` (52 MB) — RTMPose COCO-13 estimator, committed.
+Three vendored scripts, each independently runnable as a CLI and each
+importable as a library:
+
+| Script | Lines | Purpose | Public surface |
+| --- | --- | --- | --- |
+| `segment_swing.py` | 952 | v2.1 wrist-signal cut pipeline (the one `backend.cli segment` wraps) | `PoseRunner`, `OnlineSegmenter`, `segment_cycles`, `bridge_gaps`, `ema_smooth`, `compute_velocity_2d`, `extract_one_clip`, `phase_timeline`, `SwingSegment`, `_frames_to_tc` |
+| `analyze_swing.py` | 450 | MediaPipe 33-point once. Wrist feeds `OnlineSegmenter`; full 33 stored per frame so clips + viz.mp4 are guaranteed 1:1 with the segments list | `MediaPipePoseRunner`, `draw_skeleton_33`, `extract_skel_clip`, `render_full_viz`, `main()` |
+| `gen_skeleton_anim.py` | 1021 | RTMDet (bbox) + RTMPose / MediaPipe (skeleton) four-quadrant compositor. Optional smart-zoom ROI + stable smoother + auto-sizing | `RtmdetRunner`, `RtmposeRunner`, `MediaPipePoseRunner`, `KeypointSmoother`, `CenterSmoother`, `StableBoxAutoSizer`, `build_algo_label`, `draw_skeleton`, `resolve_models`, `build_runners` |
+
+All three are byte-for-byte vendored — no edits inside `core/`. Drift
+between this repo and the underlying source is resolved by `cp`, never by
+hand-merging.
+
+Models committed to the repo:
+
+- `pose_landmarker_lite.task` (5.5 MB) — MediaPipe Pose model.
+- `rtmdet-m-487628.onnx` (104 MB) — RTMDet person detector.
+- `rtmpose-m-27c0e6.onnx` (52 MB) — RTMPose COCO-13 estimator.
 
 ### L2 — Pipeline (`backend/service/pipeline.py`)
 
@@ -129,15 +139,18 @@ helper from anywhere else (e.g. the FastAPI app wants to peek at
 re-export. This keeps `core/` interchangeable with any future
 implementation.
 
-When upstream `ace-crush-lab` updates the algorithm:
+When the underlying source updates one of the three vendored scripts:
 
 ```bash
-cp /path/to/ace-crush-lab/app/scripts/segment_swing.py backend/core/segment_swing.py
-git add backend/core/segment_swing.py
-git commit -m "vendor: sync segment_swing.py from upstream @ <hash>"
+cp <new-segment_swing.py>     backend/core/segment_swing.py
+cp <new-analyze_swing.py>     backend/core/analyze_swing.py
+cp <new-gen_skeleton_anim.py> backend/core/gen_skeleton_anim.py
+git add backend/core/
+git commit -m "vendor: sync from underlying source @ <hash>"
 ```
 
-No merge conflicts. No "did anyone change this locally?" questions.
+No merge conflicts. No "did anyone change this locally?" questions — the
+files are committed verbatim.
 
 ## Concurrency model
 

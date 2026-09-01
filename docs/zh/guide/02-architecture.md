@@ -48,14 +48,22 @@ pipeline 之外没有任何其它 import 方。
 
 ### L1 — 算法 (`backend/core/`)
 
-- `segment_swing.py` (952 行) —— 从
-  `ace-crush-lab/app/scripts/segment_swing.py` 原样 vendored。公开 API:
-  `PoseRunner`、`OnlineSegmenter`、`segment_cycles`、`bridge_gaps`、
-  `ema_smooth`、`compute_velocity_2d`、`extract_one_clip`、
-  `phase_timeline`、`SwingSegment`、`_frames_to_tc`
-- `pose_landmarker_lite.task` (5.5 MB) —— MediaPipe Pose 模型,已入库
-- `rtmdet-m-487628.onnx` (104 MB) —— RTMDet 人物检测,已入库
-- `rtmpose-m-27c0e6.onnx` (52 MB) —— RTMPose COCO-13 估计器,已入库
+三个 vendored 脚本,每个既能单独跑 CLI 又能当库 import:
+
+| 脚本 | 行数 | 用途 | 公开 API |
+| --- | --- | --- | --- |
+| `segment_swing.py` | 952 | v2.1 右手腕信号切分管线 (`backend.cli segment` 包的就是它) | `PoseRunner`、`OnlineSegmenter`、`segment_cycles`、`bridge_gaps`、`ema_smooth`、`compute_velocity_2d`、`extract_one_clip`、`phase_timeline`、`SwingSegment`、`_frames_to_tc` |
+| `analyze_swing.py` | 450 | MediaPipe 33 点一次推理。wrist 喂 `OnlineSegmenter`,完整 33 点按帧缓存,clip + viz.mp4 与切分列表 1:1 | `MediaPipePoseRunner`、`draw_skeleton_33`、`extract_skel_clip`、`render_full_viz`、`main()` |
+| `gen_skeleton_anim.py` | 1021 | RTMDet (bbox) + RTMPose / MediaPipe (骨架) 四象限合成器,带可选智能裁剪 ROI + 稳定平滑 + 自动尺寸 | `RtmdetRunner`、`RtmposeRunner`、`MediaPipePoseRunner`、`KeypointSmoother`、`CenterSmoother`、`StableBoxAutoSizer`、`build_algo_label`、`draw_skeleton`、`resolve_models`、`build_runners` |
+
+三个全是 byte-for-byte vendored —— `core/` 里**一行不改**。本仓库跟底层
+源的漂移用 `cp` 解决,绝不手工 merge。
+
+已入库的模型:
+
+- `pose_landmarker_lite.task` (5.5 MB) —— MediaPipe Pose 模型
+- `rtmdet-m-487628.onnx` (104 MB) —— RTMDet 人物检测
+- `rtmpose-m-27c0e6.onnx` (52 MB) —— RTMPose COCO-13 估计器
 
 ### L2 — Pipeline (`backend/service/pipeline.py`)
 
@@ -124,15 +132,18 @@ bbox 与骨架。返回完整的 `segments.json` payload dict。
 core 里的辅助,先在 pipeline.py 暴露一个封装,再让 core re-export。这保
 证 `core/` 可被未来任何实现替换。
 
-上游 `ace-crush-lab` 更新算法时:
+底层源更新三个 vendored 脚本时:
 
 ```bash
-cp /path/to/ace-crush-lab/app/scripts/segment_swing.py backend/core/segment_swing.py
-git add backend/core/segment_swing.py
-git commit -m "vendor: sync segment_swing.py from upstream @ <hash>"
+cp <新-segment_swing.py>     backend/core/segment_swing.py
+cp <新-analyze_swing.py>     backend/core/analyze_swing.py
+cp <新-gen_skeleton_anim.py> backend/core/gen_skeleton_anim.py
+git add backend/core/
+git commit -m "vendor: 从底层源同步 @ <hash>"
 ```
 
-没有 merge 冲突。没有"有没有人在本地改过"的灵魂拷问。
+没有 merge 冲突。没有"有没有人在本地改过"的灵魂拷问 —— 文件就是
+verbatim 提交的。
 
 ## 并发模型
 

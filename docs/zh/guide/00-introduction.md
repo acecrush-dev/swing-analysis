@@ -12,7 +12,8 @@ follow_through`) 与预切好的 clip MP4。
 ## 它刻意不做的事
 
 - **不做动作评分**。这是切分,不是分析。击球技术对不对是另一个下游问题
-  (上游 `ace-crush-lab` 仓的 `analyze_swing.py` 干那个)
+  (见 [`backend/core/analyze_swing.py`](../../backend/core/analyze_swing.py)
+  —— 它画 33 点骨架 + 抽 clip,但不评分)
 - **不做云服务**。一切都在本地跑。FastAPI 默认绑 `127.0.0.1`。要开放到
   LAN 是 `Phase C` 的事
 - **不做模型自动更新**。MediaPipe Pose 模型 (`pose_landmarker_lite.task`,
@@ -29,9 +30,10 @@ follow_through`) 与预切好的 clip MP4。
 
 两条原则:
 
-1. **算法库是神圣的**。它从 `ace-crush-lab/app/scripts/segment_swing.py`
-   byte-for-byte 拷过来。任何修改必须先来自上游。这保证了你在这里做的
-   任何"修复"都会跟同一份代码的其他消费者 (上游仓的 Flutter 移动端) 同步
+1. **算法库是神圣的**。`backend/core/` 里三个脚本全部 byte-for-byte
+   vendored —— `segment_swing.py`、`analyze_swing.py`、
+   `gen_skeleton_anim.py`。任何修改必须先来自底层源,再 `cp` 进来。
+   这保证了你在这里做的任何"修复"都能用一次拷贝复现
 
 2. **UI 是可替换的**。CLI 是一种 UI。桌面应用是一种 UI。浏览器 tab 是一
    种 UI。它们都想做同一件事 —— 提交任务、看进度、拿结果。正确的形状是
@@ -44,8 +46,9 @@ follow_through`) 与预切好的 clip MP4。
 
 - 你需要实时姿态跟踪 (这是离线批处理 —— 在 M 系列 Mac 上 Pass 1+1.5 大
   约 1s/帧)
-- 你想要分析结果 (关节角度、动作分类)。用
-  `ace-crush-lab/app/scripts/analyze_swing.py`
+- 你想要一段独立的智能裁剪骨架动画视频 (不要切分,只要叠加)。直接跑
+  `python3 backend/core/gen_skeleton_anim.py --help` —— 同一份算法,但
+  包装给 animation-only 场景
 - 你想要一个托管的 Web 应用。它本地优先是设计如此;Phase C 画了自托管
   的草图但没建
 

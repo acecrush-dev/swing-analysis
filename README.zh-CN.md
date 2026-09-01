@@ -6,9 +6,8 @@
 [English](README.md) | **简体中文**
 
 桌面端网球挥拍自动切分工具。把已实测验证的切分管线包装成可服务化的
-Python 后端，UI 层完全可插拔。算法库 **vendored byte-for-byte** 自
-[`ace-crush-lab`](https://github.com/leochan007/ace-crush-lab) —— 上游修
-一行，这里重拷一行，对齐零成本。
+Python 后端,UI 层完全可插拔。算法核 **vendored byte-for-byte** 落在
+`backend/core/`,底层源更新时重拷即可。
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -28,9 +27,11 @@ Python 后端，UI 层完全可插拔。算法库 **vendored byte-for-byte** 自
 └────────────────────────┬─────────────────────────────────┘
                          │  (算法零改动)
 ┌────────────────────────▼─────────────────────────────────┐
-│ core/segment_swing.py                                    │
-│  (从 ace-crush-lab/app/scripts/ 原样拷贝, byte-for-byte │
-│   —— 上游更新只需重拷)                                   │
+│ core/  —— 三个独立 vendored 的算法                       │
+│  segment_swing.py        v2.1 右手腕信号切分管线         │
+│  analyze_swing.py        MediaPipe 33 点一次 + 骨架      │
+│  gen_skeleton_anim.py    RTMDet + RTMPose / MediaPipe    │
+│                          四象限骨架动画                  │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -44,7 +45,7 @@ Python 后端，UI 层完全可插拔。算法库 **vendored byte-for-byte** 自
 - **🚀 在线 emit** —— 段随 Pass 1 流式出现,不用等整段视频处理完
 - **🔌 三种可插拔 UI** —— 终端 / Electron / 未来的浏览器 / 移动端,共用同一套 REST + WebSocket
 - **🎛 三种可插拔模型** —— MediaPipe Pose 负责 segmentation;RTMDet + RTMPose (或 MediaPipe) 负责可选的 clip bbox + 骨架叠加
-- **📦 自包含** —— 算法 vendored + 三个模型 (~160 MB) 已入库,clone 即跑,不用为了模型去下 PyPI
+- **📦 自包含** —— 三个 vendored 算法 + 三个模型 (~160 MB) 已入库,clone 即跑,不用为了模型去下 PyPI
 - **🎬 原生视频 seek** —— GUI 用 HTTP Range 播**原始视频**,绕开 cv2 `mp4v` 编码 Chromium 解不出来的坑
 - **🧩 模块纯粹,按 pipeline 组合** —— 切分 / 检测 / 姿态是互相独立的函数;可同跑,也可分段跑同一组 clips
 
@@ -60,6 +61,14 @@ python3 -m backend.cli segment --video /abs/match.mp4 --save-clips --clip-bbox -
 # CLI —— 对已切好的 clips 后处理标注
 python3 -m backend.cli annotate --clips-dir backend/data/jobs/<id>/clips --bbox --skel
 
+# 独立算法 CLI (在 backend/core/ 下) —— 不起服务、不包 pipeline,直接跑
+# 单个阶段:
+python3 backend/core/analyze_swing.py \
+    --file /abs/match.mp4 --save-clips --skel-clips --viz-full
+python3 backend/core/gen_skeleton_anim.py \
+    --file /abs/match.mp4 --det-model rtmdet-m-487628.onnx \
+    --pose-model rtmpose-m-27c0e6.onnx
+
 # REST 服务 —— 给 Electron / 浏览器 / 任何前端用
 python3 -m backend.service --port 8321
 # stdout 末行: SWING_SERVICE_URL=http://127.0.0.1:8321
@@ -67,6 +76,17 @@ python3 -m backend.service --port 8321
 # Electron 桌面 GUI —— 全功能
 npm install && npm run dev
 ```
+
+## 三个 vendored 算法
+
+`backend/core/` 里落了三个独立、byte-for-byte vendored 的脚本。每个都
+可独立运行(不依赖服务、不依赖 Electron),也都可当库 import:
+
+| 脚本 | 干什么 | 什么时候用它 |
+| --- | --- | --- |
+| `backend/core/segment_swing.py` | Pass-1 在线 + Pass-1.5 离线切分管线。单一信号:右手腕 (MediaPipe 关键点 16)。输出 `SwingSegment`,带 `ready / windup / contact / follow_through` 四相位。 | 只要切分列表,不要别的。`backend.cli segment` 包的就是它。 |
+| `backend/core/analyze_swing.py` | MediaPipe 一次推理 → 33 点。wrist 喂 `segment_swing` 的 `OnlineSegmenter`,33 点按帧缓存,这样 clip 叠加 和整段 `viz.mp4` 与切分列表 1:1 对齐。 | 想要每段 clip + 整段视频都带 33 点骨架,一次跑完。 |
+| `backend/core/gen_skeleton_anim.py` | RTMDet (bbox) + RTMPose / MediaPipe (骨架) 四象限合成器。可选 RTMDet 驱动的智能裁剪放大,带 ROI 稳定平滑 + 自动尺寸。 | 想做一段独立的骨架动画视频,不需要切分,只要叠加。 |
 
 ## 文档
 

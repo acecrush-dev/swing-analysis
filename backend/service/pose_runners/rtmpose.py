@@ -1,6 +1,9 @@
 """RTMPose — pure ONNX pose estimator (COCO-17 → COCO-13 mapping).
 
-Vendored from ace-crush-lab/app/scripts/gen_skeleton_anim.py.
+The COCO-17 → COCO-13 projection lives in `backend/core/gen_skeleton_anim.py`
+(SimCC decoding + topology); this module is the ONNX-runtime binding that
+turns it into a callable runner.
+
 Input: BGR frame + optional BBox ROI.
 Output: 13 keypoints in normalized [0,1] image coordinates (or None).
 
