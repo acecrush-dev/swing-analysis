@@ -196,8 +196,8 @@ keypoints, then:
   phase square-wave) with `--viz-full`.
 
 ```bash
-python3 backend/core/analyze_swing.py \
-    --file /abs/match.mp4 \
+backend/.venv/bin/python3 backend/core/analyze_swing.py \
+    --file ../../demo.mp4 \
     --save-clips --skel-clips --viz-full
 ```
 
@@ -221,21 +221,21 @@ No swing detection — just an overlay video.
 
 ```bash
 # Quadrant 1 — classic ONNX pipeline
-python3 backend/core/gen_skeleton_anim.py \
-    --file /abs/match.mp4 \
-    --det-model rtmdet-m-487628.onnx \
-    --pose-model rtmpose-m-27c0e6.onnx
+backend/.venv/bin/python3 backend/core/gen_skeleton_anim.py \
+    --file ../../demo.mp4 \
+    --det-model ../models/rtmdet-m-487628.onnx \
+    --pose-model ../models/rtmpose-m-27c0e6.onnx
 
 # Quadrant 2 — hybrid (RTMDet bbox + MediaPipe 33-point skeleton)
-python3 backend/core/gen_skeleton_anim.py \
-    --file /abs/match.mp4 \
-    --det-model rtmdet-m-487628.onnx \
-    --pose-model pose_landmarker_lite.task
+backend/.venv/bin/python3 backend/core/gen_skeleton_anim.py \
+    --file ../../demo.mp4 \
+    --det-model ../models/rtmdet-m-487628.onnx \
+    --pose-model ../models/pose_landmarker_lite.task
 
 # Quadrant 4b — MediaPipe full-frame, no RTMDet
-python3 backend/core/gen_skeleton_anim.py \
-    --file /abs/match.mp4 \
-    --pose-model pose_landmarker_lite.task
+backend/.venv/bin/python3 backend/core/gen_skeleton_anim.py \
+    --file ../../demo.mp4 \
+    --pose-model ../models/pose_landmarker_lite.task
 ```
 
 The output filename defaults to `<input>_skeleton_anim.mp4` next to the
@@ -248,8 +248,8 @@ when you want cut-only output and don't care about the Electron GUI's
 clip / viz annotations:
 
 ```bash
-python3 backend/core/segment_swing.py \
-    --file /abs/match.mp4 \
+backend/.venv/bin/python3 backend/core/segment_swing.py \
+    --file ../../demo.mp4 \
     --max-frames 1500 \
     --out-dir /tmp/swing_out
 ```

@@ -9,6 +9,7 @@
 | Python | ≥ 3.10 | MediaPipe 预编译 wheel 历史上止于 3.12;3.13 已实测可跑 |
 | Node.js | ≥ 18 | Electron 31 + electron-vite |
 | Git | 任意 | clone 仓库 |
+| **git-lfs** | **必需** | `backend/models/{rtmdet,rtmpose}-m-*.onnx`(104 MB + 52 MB)是 Git LFS 跟踪的。`git clone` 拉下来是 134 字节的 LFS 指针文本,不是真的 ONNX 二进制 —— 加载器会挂。要么装 `git-lfs` 后跑 `git lfs pull`,要么用 `scripts/fetch-model.sh`(一键搞定 MediaPipe + LFS) |
 | ffmpeg | 不需要 | OpenCV 自带编解码 |
 | **mediapipe** | **== 0.10.35**(已在 `backend/requirements.txt` 里钉死) | MediaPipe **1.0** 的 wheel 在 Apple Silicon 上有回归,会在 `TensorsToDetectionsCalculator::Open()` abort。详见 [07 · 故障排查](07-troubleshooting.md#apple-silicon-metal-delegate-回归)。**不要直接 `pip install --upgrade mediapipe`** —— 升之前先看那节 |
 
@@ -32,15 +33,37 @@ backend/.venv/bin/pip install -r backend/requirements.txt
 pip3 install -r backend/requirements.txt
 ```
 
-## 3. MediaPipe 模型
+## 3. 模型
 
-模型**已经在仓库里**了 —— `backend/models/pose_landmarker_lite.task`
-(5.5 MB)。`scripts/fetch-model.sh` 是兜底脚本,极少数情况下文件丢了,它
-从 MediaPipe 官方 CDN 下载。
+三个模型文件在 `backend/models/` 下,**全部都走 Git LFS**:
+
+| 文件 | 大小 | 来源 | `git clone` 完你拿到的是 |
+| --- | --- | --- | --- |
+| `pose_landmarker_lite.task` | 5.5 MB | Git LFS | 132 字节指针文本 |
+| `rtmdet-m-487628.onnx` | 104 MB | Git LFS | 134 字节指针文本 |
+| `rtmpose-m-27c0e6.onnx` | 52 MB | Git LFS | 133 字节指针文本 |
+
+`scripts/fetch-model.sh` 是全家桶 —— (a) MediaPipe lite 缺了(且 LFS 不可达)时从 CDN 重新下, (b) 检测 LFS 指针文件(约 130 字节、首行 `version https://git-lfs.github.com/spec/v1`)并自动跑 `git lfs pull` 把真二进制拉下来:
 
 ```bash
-bash scripts/fetch-model.sh    # 应该打 "已就位 …"
+bash scripts/fetch-model.sh
+# 期望输出:
+#   [fetch-model] MediaPipe lite 已就位 ... (5.5M)
+#   [fetch-model] 模型状态:
+#     ✓ pose_landmarker_lite.task   (5.5M)
+#     ✓ rtmdet-m-487628.onnx        (112M)
+#     ✓ rtmpose-m-27c0e6.onnx       ( 52M)
 ```
+
+想手动也行:
+
+```bash
+brew install git-lfs        # macOS —— Linux 用 apt-get install git-lfs
+git lfs install
+git lfs pull                # 把 backend/models/*.onnx 实物化出来
+```
+
+漏跑 `git lfs pull` 的症状: 脚本报 `模型文件不存在: backend/models/rtmdet-m-487628.onnx`,但 `ls -la` 显示文件确实存在、大小 134 字节 —— 那是 LFS 指针文本。重新跑 `bash scripts/fetch-model.sh` 即可。
 
 ## 4. 烟雾测试 (不开服务)
 
@@ -61,18 +84,18 @@ python3 -m backend.cli segment \
 
 ```bash
 # MediaPipe 一次跑完 33 点 → 切分 + 带骨架的 clip + 整段 viz
-python3 backend/core/analyze_swing.py \
-    --file /abs/match.mp4 \
+backend/.venv/bin/python3 backend/core/analyze_swing.py \
+    --file ../../demo.mp4 \
     --save-clips --skel-clips --viz-full
 
 # RTMDet 人物框 + RTMPose 13 点骨架,四象限合成器
-python3 backend/core/gen_skeleton_anim.py \
-    --file /abs/match.mp4 \
-    --det-model rtmdet-m-487628.onnx \
-    --pose-model rtmpose-m-27c0e6.onnx
+backend/.venv/bin/python3 backend/core/gen_skeleton_anim.py \
+    --file ../../demo.mp4 \
+    --det-model ../models/rtmdet-m-487628.onnx \
+    --pose-model ../models/rtmpose-m-27c0e6.onnx
 
 # 只跑腕信号切分管线 (跟 `backend.cli segment` 同款)
-python3 backend/core/segment_swing.py --file /abs/match.mp4 --max-frames 1500
+backend/.venv/bin/python3 backend/core/segment_swing.py --file ../../demo.mp4 --max-frames 1500
 ```
 
 每个脚本各管什么见 [02 · 架构](02-architecture.md#l1--算法-backendcore)。

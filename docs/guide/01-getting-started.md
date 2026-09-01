@@ -9,6 +9,7 @@ Five minutes from `git clone` to first result.
 | Python | ≥ 3.10 | MediaPipe's prebuilt wheels cap out at 3.12; 3.13 works fine |
 | Node.js | ≥ 18 | Electron 31 + electron-vite |
 | Git | any | clone the repo |
+| **git-lfs** | **required** | `backend/models/{rtmdet,rtmpose}-m-*.onnx` (104 MB + 52 MB) are Git LFS-tracked. A plain `git clone` gives you 134-byte pointer text files, not the real binaries — the ONNX loaders will fail. Either install `git-lfs` and run `git lfs pull`, or use `scripts/fetch-model.sh` (handles both MediaPipe + LFS for you). |
 | ffmpeg | not needed | OpenCV bundles its own codec stack |
 | **mediapipe** | **== 0.10.35** (pinned in `backend/requirements.txt`) | MediaPipe **1.0** wheel has a regression on Apple Silicon that aborts in `TensorsToDetectionsCalculator::Open()`. See [07 · Troubleshooting](07-troubleshooting.md#apple-silicon-metal-delegate-regression). Don't `pip install --upgrade mediapipe` without re-reading that section. |
 
@@ -33,15 +34,43 @@ backend/.venv/bin/pip install -r backend/requirements.txt
 pip3 install -r backend/requirements.txt
 ```
 
-## 3. MediaPipe model
+## 3. Models
 
-The model is **already in the repo** at `backend/models/pose_landmarker_lite.task`
-(5.5 MB). The `scripts/fetch-model.sh` script is a fallback for the rare case
-you lose it — it downloads from MediaPipe's official CDN.
+Three model files live under `backend/models/`, **all three are Git LFS-tracked**:
+
+| File | Size | Source | After `git clone` you have |
+| --- | --- | --- | --- |
+| `pose_landmarker_lite.task` | 5.5 MB | Git LFS | 132-byte pointer text |
+| `rtmdet-m-487628.onnx` | 104 MB | Git LFS | 134-byte pointer text |
+| `rtmpose-m-27c0e6.onnx` | 52 MB | Git LFS | 133-byte pointer text |
+
+`scripts/fetch-model.sh` is the all-in-one — it (a) re-downloads the MediaPipe
+lite from its CDN if the real binary is missing AND LFS can't be reached,
+(b) detects LFS pointer files (~130 bytes, start with
+`version https://git-lfs.github.com/spec/v1`) and runs `git lfs pull` to
+materialise them:
 
 ```bash
-bash scripts/fetch-model.sh    # should print "已就位 …"
+bash scripts/fetch-model.sh
+# 期望输出:
+#   [fetch-model] MediaPipe lite 已就位 ... (5.5M)
+#   [fetch-model] 模型状态:
+#     ✓ pose_landmarker_lite.task   (5.5M)
+#     ✓ rtmdet-m-487628.onnx        (112M)
+#     ✓ rtmpose-m-27c0e6.onnx       ( 52M)
 ```
+
+If you'd rather do it manually:
+
+```bash
+brew install git-lfs        # macOS — or apt-get install git-lfs on Linux
+git lfs install
+git lfs pull                # materialises the *.onnx files in backend/models/
+```
+
+Symptom of a missing LFS pull: the script prints `模型文件不存在:
+backend/models/rtmdet-m-487628.onnx` — but `ls -la` shows the file IS there
+at 134 bytes. That's the LFS pointer text. Re-run `bash scripts/fetch-model.sh`.
 
 ## 4. Smoke test (no service)
 
@@ -63,18 +92,18 @@ without the full orchestration:
 
 ```bash
 # MediaPipe 33-point once → segments + skel clips + full-video viz
-python3 backend/core/analyze_swing.py \
-    --file /abs/match.mp4 \
+backend/.venv/bin/python3 backend/core/analyze_swing.py \
+    --file ../../demo.mp4 \
     --save-clips --skel-clips --viz-full
 
 # RTMDet bbox + RTMPose 13-point skeleton, four-quadrant compositor
-python3 backend/core/gen_skeleton_anim.py \
-    --file /abs/match.mp4 \
-    --det-model rtmdet-m-487628.onnx \
-    --pose-model rtmpose-m-27c0e6.onnx
+backend/.venv/bin/python3 backend/core/gen_skeleton_anim.py \
+    --file ../../demo.mp4 \
+    --det-model ../models/rtmdet-m-487628.onnx \
+    --pose-model ../models/rtmpose-m-27c0e6.onnx
 
 # Just the wrist-signal cut pipeline (same as `backend.cli segment`)
-python3 backend/core/segment_swing.py --file /abs/match.mp4 --max-frames 1500
+backend/.venv/bin/python3 backend/core/segment_swing.py --file ../../demo.mp4 --max-frames 1500
 ```
 
 See [02 · Architecture](02-architecture.md#l1--algorithm-backendcore) for what

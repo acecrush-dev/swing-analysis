@@ -190,8 +190,8 @@ pipeline / 服务壳时很合适。
 - 加 `--viz-full` 写整段 `viz.mp4` (骨架 + 周期条 + 底部相位方波)
 
 ```bash
-python3 backend/core/analyze_swing.py \
-    --file /abs/match.mp4 \
+backend/.venv/bin/python3 backend/core/analyze_swing.py \
+    --file ../../demo.mp4 \
     --save-clips --skel-clips --viz-full
 ```
 
@@ -213,21 +213,21 @@ RTMDet (bbox) + RTMPose / MediaPipe (骨架) 四象限合成器。不做切分,
 
 ```bash
 # 象限 1 —— 经典 ONNX 流水线
-python3 backend/core/gen_skeleton_anim.py \
-    --file /abs/match.mp4 \
-    --det-model rtmdet-m-487628.onnx \
-    --pose-model rtmpose-m-27c0e6.onnx
+backend/.venv/bin/python3 backend/core/gen_skeleton_anim.py \
+    --file ../../demo.mp4 \
+    --det-model ../models/rtmdet-m-487628.onnx \
+    --pose-model ../models/rtmpose-m-27c0e6.onnx
 
 # 象限 2 —— 混合 (RTMDet 框 + MediaPipe 33 点骨架)
-python3 backend/core/gen_skeleton_anim.py \
-    --file /abs/match.mp4 \
-    --det-model rtmdet-m-487628.onnx \
-    --pose-model pose_landmarker_lite.task
+backend/.venv/bin/python3 backend/core/gen_skeleton_anim.py \
+    --file ../../demo.mp4 \
+    --det-model ../models/rtmdet-m-487628.onnx \
+    --pose-model ../models/pose_landmarker_lite.task
 
 # 象限 4b —— MediaPipe 全帧,不用 RTMDet
-python3 backend/core/gen_skeleton_anim.py \
-    --file /abs/match.mp4 \
-    --pose-model pose_landmarker_lite.task
+backend/.venv/bin/python3 backend/core/gen_skeleton_anim.py \
+    --file ../../demo.mp4 \
+    --pose-model ../models/pose_landmarker_lite.task
 ```
 
 输出文件名默认 `<输入>_skeleton_anim.mp4`,落在输入旁 (输入永远不被覆
@@ -239,8 +239,8 @@ python3 backend/core/gen_skeleton_anim.py \
 Electron GUI 那套 clip / viz 标注时用它:
 
 ```bash
-python3 backend/core/segment_swing.py \
-    --file /abs/match.mp4 \
+backend/.venv/bin/python3 backend/core/segment_swing.py \
+    --file ../../demo.mp4 \
     --max-frames 1500 \
     --out-dir /tmp/swing_out
 ```

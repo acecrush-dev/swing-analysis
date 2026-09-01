@@ -47,7 +47,7 @@ follow_through`) 与预切好的 clip MP4。
 - 你需要实时姿态跟踪 (这是离线批处理 —— 在 M 系列 Mac 上 Pass 1+1.5 大
   约 1s/帧)
 - 你想要一段独立的智能裁剪骨架动画视频 (不要切分,只要叠加)。直接跑
-  `python3 backend/core/gen_skeleton_anim.py --help` —— 同一份算法,但
+  `backend/.venv/bin/python3 backend/core/gen_skeleton_anim.py --help` —— 同一份算法,但
   包装给 animation-only 场景
 - 你想要一个托管的 Web 应用。它本地优先是设计如此;Phase C 画了自托管
   的草图但没建

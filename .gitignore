@@ -32,12 +32,11 @@ electron-builder-cache/
 # ── python venv + runtime + build intermediates ────────────────────────
 backend/.venv/
 backend/data/                    # service.json, jobs/<id>/segments.json etc.
-# Only pose_landmarker_lite.task is committed (5.5 MB; fetched model lives
-# next to the code so a fresh clone runs out of the box; scripts/fetch-model.sh
-# re-downloads only if missing). The 'heavy' variant (29 MB) and any other
-# .task experiments are intentionally NOT tracked.
-backend/models/*.task
-!backend/models/pose_landmarker_lite.task
+# All model files (backend/models/*.onnx and *.task) live in Git LFS,
+# so a fresh clone just gets 134-byte pointer text — fetch via
+# `git lfs pull` or `bash scripts/fetch-model.sh` to materialise them.
+# No exception rule needed: LFS-tracked files are stored as pointers in git
+# but the real binary is downloaded on `git lfs checkout`.
 backend/cli_jobs/                # if CLI --out-dir points here
 __pycache__/
 *.pyc

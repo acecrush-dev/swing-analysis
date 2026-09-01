@@ -60,7 +60,7 @@ debt.
   takes ~1s per frame on M-series Mac).
 - You want a polished standalone skeleton animation video with smart-zoom
   cropping (no swing detection, just the overlay). Run
-  `python3 backend/core/gen_skeleton_anim.py --help` directly — it's the
+  `backend/.venv/bin/python3 backend/core/gen_skeleton_anim.py --help` directly — it's the
   same algorithm, but packaged for animation-only use.
 - You want a hosted web app. This is local-first by design; Phase C sketches
   a self-hosted option but it's not built.
