@@ -20,7 +20,7 @@
 
 约束(2026-08-28 user-direct):
   1. 输入 = --file (默认 demo.mp4)   绝对不覆盖
-  2. 输出 = demo_skeleton_anim.mp4
+  2. 输出 = demo_skeleton_anim.mp4, 默认落在当前工作目录 (CWD) 而非脚本旁
   3. 进度条 + Ctrl+C 优雅保存
   4. 用 RTMDet (画框) + RTMPose / MediaPipe (画骨架)
 
@@ -734,7 +734,9 @@ def main():
     parser = argparse.ArgumentParser(description='骨骼动画视频生成器 (RTMDet 画框 + RTMPose / MediaPipe 画骨架)')
     parser.add_argument('--file',       '-f', type=str, default='demo.mp4',
                         help='输入文件名 (默认 demo.mp4)')
-    parser.add_argument('--output',     '-o', type=str, default=None)
+    parser.add_argument('--output',     '-o', type=str, default=None,
+                        help='输出视频路径 (默认: 当前目录/demo_skeleton_anim.mp4). '
+                             '绝不覆盖输入(脚本会显式检查 in==out).')
     parser.add_argument('--det-model',  '-d', type=str, default=None,
                         help='RTMDet 模型 (.onnx)。省略时按 --pose-model 自动配对')
     parser.add_argument('--pose-model', '-p', type=str, default=None,
@@ -754,7 +756,12 @@ def main():
 
     here = Path(__file__).parent.resolve()
     in_path  = Path(args.file) if os.path.isabs(args.file) else (here / args.file)
-    out_path = Path(args.output) if args.output else (here / 'demo_skeleton_anim.mp4')
+    # 默认输出到 CWD 而不是脚本所在目录 —— 用户在哪个目录跑就落哪个目录,
+    # 比 "脚本旁边" 更符合直觉;`--output` 显式传入则用传入值(相对路径也按 CWD 解).
+    if args.output:
+        out_path = Path(args.output) if os.path.isabs(args.output) else (Path.cwd() / args.output)
+    else:
+        out_path = Path.cwd() / 'demo_skeleton_anim.mp4'
     in_abs, out_abs = in_path.resolve(), out_path.resolve()
 
     if in_abs == out_abs:
