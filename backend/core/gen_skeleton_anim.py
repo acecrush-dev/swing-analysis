@@ -270,7 +270,17 @@ def crop_and_letterbox(frame, box, out_w, out_h):
 
 # ═══════════════════════════ ONNX 模型加载 (RTMDet / RTMPose 通用) ═══════════════════════════
 
-def _make_onnx_session(model_path: Path):
+def _make_onnx_session(model_path: Path, skip_coreml: bool = False):
+    """Build an onnxruntime InferenceSession.
+
+    Args:
+        model_path: path to .onnx file.
+        skip_coreml: if True, do NOT add CoreMLExecutionProvider to the
+            provider list. Use this for models whose output shapes
+            CoreML EP mis-infers statically (e.g. RTMDet — see
+            `CoreML static output shape ({1,1,1,8400,8400}) and inferred
+            shape ({1,8400}) have different ranks` on Apple Silicon).
+    """
     import onnxruntime as ort
     if not model_path.exists():
         raise FileNotFoundError(f"ONNX 模型不存在: {model_path}")
@@ -279,7 +289,8 @@ def _make_onnx_session(model_path: Path):
     so.intra_op_num_threads = max(1, (os.cpu_count() or 4) // 2)
     available = set(ort.get_available_providers())
     preferred = []
-    if "CoreMLExecutionProvider" in available: preferred.append("CoreMLExecutionProvider")
+    if not skip_coreml and "CoreMLExecutionProvider" in available:
+        preferred.append("CoreMLExecutionProvider")
     if "CUDAExecutionProvider" in available: preferred.append("CUDAExecutionProvider")
     preferred.append("CPUExecutionProvider")
     providers = [p for p in preferred if p in available]
@@ -292,7 +303,10 @@ def _make_onnx_session(model_path: Path):
 class RtmdetRunner:
     """RTMDet 人物检测器 (输入: 整帧 → 输出: 人物 BBox 列表)。"""
     def __init__(self, model_path: Path):
-        self.session = _make_onnx_session(model_path)
+        # skip_coreml=True: CoreML EP mis-infers RTMDet's output shape
+        # (`{1,1,1,8400,8400}` static vs `{1,8400}` actual) on Apple Silicon
+        # and crashes mid-run. CPU EP is plenty fast for RTMDet-m anyway.
+        self.session = _make_onnx_session(model_path, skip_coreml=True)
 
     def detect(self, frame: np.ndarray, score_thresh: float = 0.4) -> List[BBox]:
         input_name = self.session.get_inputs()[0].name
