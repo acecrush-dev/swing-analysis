@@ -118,6 +118,7 @@ app.on('activate', () => {
 ipcMain.handle('pick-video', async () => {
   const r = await dialog.showOpenDialog({
     properties: ['openFile'],
+    defaultPath: process.cwd(),
     filters: [{ name: 'video', extensions: ['mp4', 'mov', 'm4v', 'avi'] }]
   });
   if (r.canceled || !r.filePaths[0]) return null;

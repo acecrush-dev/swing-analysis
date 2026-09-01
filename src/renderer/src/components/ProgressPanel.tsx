@@ -12,8 +12,8 @@ export function ProgressPanel({ state, progress, segments, onStart, onCancel, di
   const eta = (() => {
     if (!progress?.eta_sec && progress?.eta_sec !== 0) return '--:--';
     const s = Math.round(progress.eta_sec);
-    if (s < 3600) return `${s//60}:${s%60 < 10 ? '0' : ''}${s%60}`;
-    return `${s//3600}:${Math.floor((s%3600)/60)}:${s%60}`;
+    if (s < 3600) return `${Math.floor(s/60)}:${s%60 < 10 ? '0' : ''}${s%60}`;
+    return `${Math.floor(s/3600)}:${Math.floor((s%3600)/60)}:${s%60}`;
   })();
   return (
     <div>

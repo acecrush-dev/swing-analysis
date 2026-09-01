@@ -1,0 +1,64 @@
+{
+  "input": "/Users/leo/Documents/codes/ai/ace-crush-lab/app/scripts/fdl.mp4",
+  "fps": 21.0,
+  "total_frames": 11866,
+  "processed_frames": 300,
+  "duration_sec": 565.047619047619,
+  "wrist_detected_pct": 69.3,
+  "params": {
+    "v_swing": 0.1,
+    "gap_merge_sec": 1.5,
+    "max_bridge_sec": 1.5,
+    "min_peak": 0.3,
+    "min_dur": 0.3,
+    "max_dur": 6.0,
+    "buf_before": 1.0,
+    "buf_after": 1.0,
+    "smooth_alpha": 0.65,
+    "max_lost_frames": 8,
+    "skip": 1
+  },
+  "segments": [
+    {
+      "seg_id": 1,
+      "start_frame": 85,
+      "end_frame": 218,
+      "active_start_frame": 106,
+      "active_end_frame": 197,
+      "contact_frame": 166,
+      "peak_velocity": 0.5502069603757553,
+      "duration_sec": 4.380952380952381,
+      "total_sec": 6.380952380952381,
+      "start_timecode": "00:04.048",
+      "contact_timecode": "00:07.905",
+      "end_timecode": "00:10.381",
+      "over_long": false,
+      "merged_intervals": 4,
+      "peak_frame": 166,
+      "peak_timecode": "00:07.905",
+      "phases": [
+        {
+          "phase": "ready",
+          "start_frame": 85,
+          "end_frame": 105
+        },
+        {
+          "phase": "windup",
+          "start_frame": 106,
+          "end_frame": 162
+        },
+        {
+          "phase": "contact",
+          "start_frame": 163,
+          "end_frame": 169
+        },
+        {
+          "phase": "follow_through",
+          "start_frame": 170,
+          "end_frame": 197
+        }
+      ]
+    }
+  ],
+  "segment_count": 1
+}
