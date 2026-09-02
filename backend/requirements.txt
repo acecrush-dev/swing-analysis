@@ -20,3 +20,8 @@ pydantic>=2.6
 # ONNX runtime — for RTMDet (person detect) + RTMPose (alt pose backend).
 # CoreML EP preferred on Apple Silicon; falls back to CPU automatically.
 onnxruntime>=1.17
+
+# Clip H.264 preview transcode (plan 002). imageio-ffmpeg ships a static
+# ffmpeg binary via pip — no system install needed. If the wheel is
+# unavailable we also fall back to "ffmpeg" on PATH (see clip_codec.py).
+imageio-ffmpeg>=0.4.9

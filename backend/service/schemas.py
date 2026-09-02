@@ -76,3 +76,18 @@ class ProgressEvent(BaseModel):
     type: str  # job.started | pose.progress | segment.emitted | job.completed | job.failed | job.cancelled
     job_id: str
     data: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ClipInfo(BaseModel):
+    """Per-clip artifact manifest (plan 002)."""
+    seg_id: int
+    exists: bool          # clip_NNN.mp4 (mp4v canonical) present
+    size_bytes: int
+    playable: bool        # clip_NNN_h264.mp4 present → Chromium 内嵌可播
+    annotated: bool       # clip_NNN_annotated.mp4 present
+    thumb_ready: bool     # clip_NNN.thumb.jpg 已生成
+
+
+class ClipCleanupResult(BaseModel):
+    deleted_count: int
+    freed_bytes: int

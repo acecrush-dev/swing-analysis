@@ -24,7 +24,7 @@ export const DEFAULT_PARAMS: JobParams = {
   v_swing: 0.10, gap_merge: 1.5, max_bridge: 1.5, min_peak: 0.30,
   smooth_alpha: 0.65, max_lost_frames: 8, min_dur: 0.3, max_dur: 6.0,
   buf_before: 1.0, buf_after: 1.0, skip: 1, max_frames: 0,
-  save_clips: false, viz_video: false,
+  save_clips: true, viz_video: false,
   clip_bbox: false, clip_skel: false, skel_backend: 'rtmpose',
 };
 
@@ -57,11 +57,26 @@ export interface JobInfo {
   queue_position?: number | null;
 }
 
+export interface ClipInfo {
+  seg_id: number;
+  exists: boolean;
+  size_bytes: number;
+  playable: boolean;   // clip_NNN_h264.mp4 present → Chromium 内嵌可播
+  annotated: boolean;
+  thumb_ready: boolean;
+}
+
+export interface ClipCleanupResult {
+  deleted_count: number;
+  freed_bytes: number;
+}
+
 export type ProgressEvent =
   | { type: 'job.started'; job_id: string; data: { video_path: string } }
   | { type: 'pose.progress'; job_id: string; data: { frames: number; total: number; fps: number; eta_sec: number | null; segments_emitted: number } }
   | { type: 'segment.emitted'; job_id: string; data: { segment: Segment } }
   | { type: 'clip.annotated'; job_id: string; data: { seg_id: number; clip_in: string; clip_annotated: string; frames: number; bbox: boolean; skel: boolean; skel_backend: 'rtmpose' | 'mediapipe' } }
+  | { type: 'clip.generated'; job_id: string; data: ClipInfo }
   | { type: 'job.completed'; job_id: string; data: { segment_count: number } }
   | { type: 'job.failed'; job_id: string; data: { error: string } }
   | { type: 'job.cancelled'; job_id: string; data: Record<string, never> };

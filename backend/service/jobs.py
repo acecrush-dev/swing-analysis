@@ -166,6 +166,13 @@ class JobManager:
         def on_clip_annotated(d: Dict) -> None:
             self._broadcast(rec, "clip.annotated", d)
 
+        def on_clip_extracted(d: Dict) -> None:
+            # plan 002 M13 — fired per clip as soon as extraction +
+            # H.264 transcode has been attempted. The GUI uses this to
+            # pop the preview card into the bottom ClipsBar in real
+            # time (rather than waiting for job.completed + listClips).
+            self._broadcast(rec, "clip.generated", d)
+
         try:
             payload = run_pipeline(
                 Path(rec.video_path),
@@ -175,6 +182,7 @@ class JobManager:
                 progress_cb=progress_cb,
                 on_segment=on_segment,
                 on_clip_annotated=on_clip_annotated,
+                on_clip_extracted=on_clip_extracted,
                 should_cancel=lambda: rec._cancel_flag.is_set(),
             )
             if rec._cancel_flag.is_set():

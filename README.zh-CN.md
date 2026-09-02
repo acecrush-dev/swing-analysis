@@ -47,6 +47,7 @@ Python 后端,UI 层完全可插拔。算法核 **vendored byte-for-byte** 落�
 - **🎛 三种可插拔模型** —— MediaPipe Pose 负责 segmentation;RTMDet + RTMPose (或 MediaPipe) 负责可选的 clip bbox + 骨架叠加
 - **📦 自包含** —— 三个 vendored 算法 + 三个模型 (~160 MB) 已入库,clone 即跑,不用为了模型去下 PyPI
 - **🎬 原生视频 seek** —— GUI 用 HTTP Range 播**原始视频**,绕开 cv2 `mp4v` 编码 Chromium 解不出来的坑
+- **🎞 Clip 内嵌播放 (plan 002)** —— 每段 clip 自动转一份 H.264 预览 (`clip_NNN_h264.mp4`),GUI 直接内嵌;mp4v 原件仍作 canonical 下载产物。无 ffmpeg 时 GUI 自动降级为「跳转到原视频对应 start_timecode」。
 - **🧩 模块纯粹,按 pipeline 组合** —— 切分 / 检测 / 姿态是互相独立的函数;可同跑,也可分段跑同一组 clips
 
 ## 快速开始
@@ -120,6 +121,24 @@ Markdown 源码也在仓库 [`docs/`](docs/) 下,方便离线阅读与编辑:
                        duration_sec / wrist_detected_pct / params /
                        segments / segment_count
 ```
+
+## Clip 播放 (plan 002)
+
+| 文件 | 作用 | 落点 |
+| --- | --- | --- |
+| `clip_NNN.mp4` | Canonical 下载产物。mp4v fourcc (MPEG-4 Part 2) —— Chromium 解不出 | `backend/data/jobs/<id>/clips/` |
+| `clip_NNN_h264.mp4` | GUI 内嵌目标。H.264 + yuv420p + faststart,cut 完后由自带 ffmpeg 转码 | 同上 |
+| `clip_NNN_annotated.mp4` | 可选 bbox + 骨架叠加 (开 `clip_bbox` / `clip_skel` 时)。仅下载,不转码 | 同上 |
+| `clip_NNN.thumb.jpg` | 懒生成的中点帧 JPEG,给网格卡片当缩略图 | 同上 |
+
+**无 ffmpeg 时** (例如 `imageio-ffmpeg` wheel 没装成功且 PATH 上也没 ffmpeg):service 留 mp4v-only,GUI 在对应卡片上标 `⚠ 原生格式 · 点击跳转原视频`,点击时降级为「原视频 seek 到 start_timecode」。mp4v 仍可通过 `GET /api/artifacts/{id}/clips/clip_NNN.mp4` 下载。
+
+**端点**（完整参考见 [04 · REST API](docs/zh/guide/04-rest-api.md#clips-plan-002)）：
+
+- `GET /api/jobs/{id}/clips` —— 每段 clip 元数据 (`playable` / `size_bytes` / `thumb_ready` ...)
+- `GET /api/jobs/{id}/clips/{seg_id}/stream` —— H.264 预览,支持 HTTP Range (206)
+- `GET /api/jobs/{id}/clips/{seg_id}/thumbnail.jpg` —— 懒生成中点帧 JPEG
+- `POST /api/jobs/{id}/clips:cleanup` —— 清空 `clips/` 子目录;job 仍在 `queued`/`running` 时返回 `409`
 
 ## 许可
 

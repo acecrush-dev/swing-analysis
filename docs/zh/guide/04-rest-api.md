@@ -202,6 +202,117 @@ curl http://127.0.0.1:8321/api/artifacts/51b71ad9db8b/viz.mp4 -o viz.mp4
 - 标注后的 clip 与原 clip 同目录:`clips/clip_NNN_annotated.mp4`
 - `Content-Type` 由 `mimetypes.guess_type` 按扩展名推断
 
+## Clips (plan 002)
+
+四个端点暴露每段 clip 的元数据、H.264 预览流、中点帧缩略图，以及一个
+服务端清空接口。全部带父 `{job_id}`;无 `{job_id}` 的 clip 不可寻址。
+
+### `GET /api/jobs/{id}/clips`
+
+列出管线产出的全部 clip（文件系统为唯一真值）。
+
+```bash
+curl http://127.0.0.1:8321/api/jobs/51b71ad9db8b/clips
+```
+
+```json
+[
+  {
+    "seg_id": 1,
+    "exists": true,
+    "size_bytes": 245760,
+    "playable": true,
+    "annotated": false,
+    "thumb_ready": false
+  }
+]
+```
+
+- `playable` → `clip_NNN_h264.mp4` 存在（Chromium 能解 H.264 + yuv420p + faststart;mp4v 解不出）
+- `annotated` → `clip_NNN_annotated.mp4` 存在（仅当 `clip_bbox` 或 `clip_skel` 开启）
+- `thumb_ready` → `clip_NNN.thumb.jpg` 已落盘（见下）
+- `clips/` 不存在时返回 `[]`（如该 job 没开 `save_clips: true`）
+- `job_id` 未知返回 `404`
+
+### `GET /api/jobs/{id}/clips/{seg_id}/stream`
+
+流式输出 H.264 预览,支持 HTTP Range（与 `/api/videos` 同套机制 —— 给 `<video>` 拖动 seek 用的切片响应）。
+
+```bash
+curl -H 'Range: bytes=0-1023' \
+     http://127.0.0.1:8321/api/jobs/51b71ad9db8b/clips/1/stream \
+     -o /dev/null -D -
+# HTTP/1.1 206 Partial Content
+# Content-Range: bytes 0-1023/245760
+# Accept-Ranges: bytes
+# Content-Type: video/mp4
+```
+
+| 状态 | 何时 |
+| --- | --- |
+| `200` / `206` | H.264 预览存在 —— Chromium `<video>` 可播放 |
+| `404` | H.264 预览缺失（ffmpeg 转码失败）—— 降级行为见下方 [Clip 播放](#clip-播放) |
+
+### `GET /api/jobs/{id}/clips/{seg_id}/thumbnail.jpg`
+
+懒生成的中点帧 JPEG。首次请求用 OpenCV 解 mp4、跳到中点、写出
+`clip_NNN.thumb.jpg`（q=85）落盘;之后直接走磁盘缓存。
+
+```bash
+curl http://127.0.0.1:8321/api/jobs/51b71ad9db8b/clips/1/thumbnail.jpg -o t.jpg
+file t.jpg    # JPEG image data, JFIF standard 1.01, ...
+```
+
+| 状态 | 何时 |
+| --- | --- |
+| `200` | 返回 JPEG（刚生成或已缓存） |
+| `404` | mp4 缺失,或 cv2 解码失败 |
+
+### `POST /api/jobs/{id}/clips:cleanup`
+
+清空 job 的 `clips/` 子目录。幂等:目录不存在返回
+`{deleted_count: 0, freed_bytes: 0}`。
+
+```bash
+curl -X POST http://127.0.0.1:8321/api/jobs/51b71ad9db8b/clips:cleanup
+# {"deleted_count": 12, "freed_bytes": 4816896}
+```
+
+| 状态 | 何时 |
+| --- | --- |
+| `200` | 已清空（或本来就空） |
+| `404` | `job_id` 未知 |
+| `409` | job 状态为 `queued` 或 `running` —— clip 可能还在写入;先 cancel 或等待完成 |
+
+路径里的冒号（`clips:cleanup`）是刻意的:防止后续 `GET /clips/{seg_id}` 类路由把它误当成 seg_id。
+
+## Clip 播放
+
+管线用 OpenCV `mp4v` fourcc（MPEG-4 Part 2）写出每个
+`clip_NNN.mp4`。Chromium 的 `<video>` 解不了 mp4v,所以 Electron GUI
+没法直接内嵌播。
+
+为了让 GUI 能播,service 层在抽完 clip 后立刻把它转成同目录的
+`clip_NNN_h264.mp4`（H.264 + `yuv420p` + `+faststart`），用的 ffmpeg
+二进制由 `imageio-ffmpeg` pip wheel 自带（无需系统装）。mp4v 原件
+保留为 canonical 下载产物;GUI 内嵌的是 H.264 副本。
+
+**降级行为**（ffmpeg 不可用或转码失败时）：
+
+- 该 clip 只剩 mp4v;GUI 在对应卡片上标 `⚠ 原生格式 · 点击跳转原视频`
+- 点这种卡片会**回退到原视频按 start_timecode seek** —— 原 `<video>`
+  仍在播整段文件,但跳到对应时刻
+- 该 clip 仍可通过 `/api/artifacts` 端点下载 (`clips/clip_NNN.mp4`)
+
+这个失败模式是**刻意非致命的** —— segmentation 管线不能绑死
+ffmpeg 可用性。每次转码都包 `try/except`,失败只打一行 `✗` 日志
+留 mp4v。
+
+**`clips:cleanup` 409 守卫**：job 状态为 `queued` 或 `running` 时该
+端点拒绝（`409`）。原因:clip 抽帧在 `ThreadPoolExecutor` 后台跑,
+即使 WS 发了 `job.completed` 也可能仍在写。先 cancel,或等 job 落到终
+态(`done` / `failed` / `cancelled`)。
+
 ## 线协议类型总览
 
 | JSON 类型 | 镜像自 `backend/service/schemas.py` |
@@ -211,4 +322,6 @@ curl http://127.0.0.1:8321/api/artifacts/51b71ad9db8b/viz.mp4 -o viz.mp4
 | `JobAccepted` | `{job_id}` |
 | `JobInfo` | 完整状态 (用于 GET 与对账) |
 | `SegmentOut` | 一个 segment,字段与 `core.SwingSegment` 一致,加 `phases[]` |
+| `ClipInfo` | 每段 clip 元数据（`GET /clips` 返回） |
+| `ClipCleanupResult` | `{deleted_count, freed_bytes}`（`POST /clips:cleanup` 返回） |
 | `ProgressEvent` | WS 信封 `{type, job_id, data}` |

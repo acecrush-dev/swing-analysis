@@ -29,6 +29,7 @@ from typing import Callable, Dict, List, Optional
 import cv2
 
 from ..core import segment_swing as core
+from .clip_codec import transcode_to_h264
 from .pose_runners.annotate import ClipAnnotator
 
 
@@ -36,6 +37,7 @@ from .pose_runners.annotate import ClipAnnotator
 ProgressCb = Callable[[Dict], None]
 SegmentCb = Callable[[Dict], None]
 ClipAnnotatedCb = Callable[[Dict], None]
+ClipExtractedCb = Callable[[Dict], None]  # plan 002 (M13): per-clip WS push
 
 
 class JobCancelled(Exception):
@@ -74,6 +76,7 @@ def run_pipeline(
     progress_cb: Optional[ProgressCb] = None,
     on_segment: Optional[SegmentCb] = None,
     on_clip_annotated: Optional[ClipAnnotatedCb] = None,
+    on_clip_extracted: Optional[ClipExtractedCb] = None,
     should_cancel: Optional[Callable[[], bool]] = None,
 ) -> Dict:
     """Run Pass 1 + Pass 1.5 + (optional) Pass 2 + (optional) clip annotation.
@@ -195,6 +198,7 @@ def run_pipeline(
                             video_path, seg, clips_dir, fps, width, height,
                             annotator, p["clip_bbox"], p["clip_skel"], p["skel_backend"],
                             on_clip_annotated,
+                            on_clip_extracted,
                         )
 
                 if progress_cb is not None:
@@ -232,6 +236,7 @@ def run_pipeline(
                         video_path, seg, clips_dir, fps, width, height,
                         annotator, p["clip_bbox"], p["clip_skel"], p["skel_backend"],
                         on_clip_annotated,
+                        on_clip_extracted,
                     )
         finally:
             # Shutdown the executor LAST (and only once). It MUST be after
@@ -362,24 +367,30 @@ def _extract_and_maybe_annotate(
     skel: bool,
     skel_backend: str,
     on_clip_annotated: Optional[ClipAnnotatedCb] = None,
+    on_clip_extracted: Optional[ClipExtractedCb] = None,
 ) -> None:
     """Background task: extract one clip, then optionally annotate it.
 
     Extracted clip lives at `<clips_dir>/clip_NNN.mp4`.
     If annotation enabled: writes `<clips_dir>/clip_NNN_annotated.mp4` and
     notifies the caller via `on_clip_annotated`.
+    On completion (extracted + H.264 transcode attempted) fires
+    `on_clip_extracted` with a ClipInfo payload so the GUI can pop a
+    preview card into the bottom ClipsBar in real time (plan 002 M13).
     """
     core.extract_one_clip(video_path, seg, clips_dir, fps, width, height)
+
+    clip_mp4 = clips_dir / f"clip_{seg.seg_id:03d}.mp4"
+    if not clip_mp4.exists():
+        return
+
     if annotator is not None and (bbox or skel):
-        clip_in = clips_dir / f"clip_{seg.seg_id:03d}.mp4"
-        if not clip_in.exists():
-            return
         try:
-            res = annotator.annotate_clip(clip_in, bbox=bbox, skel=skel, skel_backend=skel_backend)
+            res = annotator.annotate_clip(clip_mp4, bbox=bbox, skel=skel, skel_backend=skel_backend)
             if on_clip_annotated is not None:
                 on_clip_annotated({
                     "seg_id": seg.seg_id,
-                    "clip_in": str(clip_in),
+                    "clip_in": str(clip_mp4),
                     "clip_annotated": str(res.clip_out),
                     "frames": res.frames_processed,
                     "bbox": bbox,
@@ -389,3 +400,28 @@ def _extract_and_maybe_annotate(
         except Exception as exc:  # noqa: BLE001
             # annotation failure must not break segmentation
             print(f"  ✗ clip {seg.seg_id:03d} annotate failed: {exc!r}", flush=True)
+
+    # H.264 preview for Chromium <video> (plan 002). mp4v original is kept
+    # as the canonical download artifact. Failure is non-fatal: the clip
+    # stays mp4v-only and the GUI falls back to original-video seek.
+    h264_path = clips_dir / f"clip_{seg.seg_id:03d}_h264.mp4"
+    try:
+        transcode_to_h264(clip_mp4, h264_path)
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ✗ clip {seg.seg_id:03d} h264 transcode failed: {exc!r}", flush=True)
+
+    # Notify the GUI that this clip is now ready to preview. Fires once
+    # per clip regardless of H.264 success (so the card always shows up
+    # even if the transcode failed — the GUI's fallback path handles it).
+    if on_clip_extracted is not None:
+        try:
+            on_clip_extracted({
+                "seg_id": seg.seg_id,
+                "exists": True,
+                "size_bytes": clip_mp4.stat().st_size,
+                "playable": h264_path.exists(),
+                "annotated": (clips_dir / f"clip_{seg.seg_id:03d}_annotated.mp4").exists(),
+                "thumb_ready": (clips_dir / f"clip_{seg.seg_id:03d}.thumb.jpg").exists(),
+            })
+        except Exception as exc:  # noqa: BLE001
+            print(f"  ✗ clip {seg.seg_id:03d} on_clip_extracted callback failed: {exc!r}", flush=True)

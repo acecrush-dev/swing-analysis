@@ -60,3 +60,4 @@ htmlcov/
 *.mp4
 .testcase*
 test-results/
+data

@@ -10,7 +10,7 @@
 | Node.js | ≥ 18 | Electron 31 + electron-vite |
 | Git | 任意 | clone 仓库 |
 | **git-lfs** | **必需** | `backend/models/{rtmdet,rtmpose}-m-*.onnx`(104 MB + 52 MB)是 Git LFS 跟踪的。`git clone` 拉下来是 134 字节的 LFS 指针文本,不是真的 ONNX 二进制 —— 加载器会挂。要么装 `git-lfs` 后跑 `git lfs pull`,要么用 `scripts/fetch-model.sh`(一键搞定 MediaPipe + LFS) |
-| ffmpeg | 不需要 | OpenCV 自带编解码 |
+| ffmpeg | 可选 (自动打包) | 仅 GUI 内嵌播放 clip 时需要。`imageio-ffmpeg` pip wheel 自带静态 ffmpeg 二进制，无需系统安装。无 ffmpeg 时 Electron GUI 自动降级为「跳转到原始视频对应 start_timecode」；clip 仍可下载。详见 [04 · REST API](04-rest-api.md#clip-playback)。 |
 | **mediapipe** | **== 0.10.35**(已在 `backend/requirements.txt` 里钉死) | MediaPipe **1.0** 的 wheel 在 Apple Silicon 上有回归,会在 `TensorsToDetectionsCalculator::Open()` abort。详见 [07 · 故障排查](07-troubleshooting.md#apple-silicon-metal-delegate-回归)。**不要直接 `pip install --upgrade mediapipe`** —— 升之前先看那节 |
 
 ## 1. Clone

@@ -1,4 +1,4 @@
-import type { JobInfo, JobParams } from './types';
+import type { ClipCleanupResult, ClipInfo, JobInfo, JobParams } from './types';
 
 export class SwingClient {
   constructor(public baseUrl: string) {}
@@ -9,6 +9,35 @@ export class SwingClient {
 
   artifactUrl(jobId: string, rel: string): string {
     return `${this.baseUrl}/api/artifacts/${jobId}/${rel}`;
+  }
+
+  // ── clips (plan 002) ──────────────────────────────────────────────
+  clipStreamUrl(jobId: string, segId: number): string {
+    return `${this.baseUrl}/api/jobs/${jobId}/clips/${segId}/stream`;
+  }
+
+  clipThumbUrl(jobId: string, segId: number): string {
+    return `${this.baseUrl}/api/jobs/${jobId}/clips/${segId}/thumbnail.jpg`;
+  }
+
+  async listClips(jobId: string): Promise<ClipInfo[]> {
+    const r = await fetch(`${this.baseUrl}/api/jobs/${jobId}/clips`);
+    if (!r.ok) {
+      const t = await r.text();
+      throw new Error(`listClips failed: ${r.status} ${t}`);
+    }
+    return r.json();
+  }
+
+  async cleanupClips(jobId: string): Promise<ClipCleanupResult> {
+    const r = await fetch(`${this.baseUrl}/api/jobs/${jobId}/clips:cleanup`, { method: 'POST' });
+    if (!r.ok) {
+      const t = await r.text();
+      // pass through status + body so caller can show 409 ("running job")
+      // verbatim to the user.
+      throw new Error(`cleanupClips failed: ${r.status} ${t}`);
+    }
+    return r.json();
   }
 
   async health(): Promise<{ status: string; model_ready: boolean; version: string }> {

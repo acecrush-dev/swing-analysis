@@ -2,26 +2,32 @@
 
 Endpoints:
   GET  /api/health
-  POST /api/jobs                         create job, returns {job_id}
-  GET  /api/jobs/{id}                    full job info (WS reconnect resync)
-  POST /api/jobs/{id}/cancel             request cancellation
-  DELETE /api/jobs/{id}                  remove + clean artifacts
-  WS   /api/jobs/{id}/events             ProgressEvent stream (with replay)
-  GET  /api/videos                       stream original video (Range)
-  GET  /api/artifacts/{job_id}/{path}    serve segments.json / clips / viz.mp4
+  POST /api/jobs                                  create job, returns {job_id}
+  GET  /api/jobs/{id}                             full job info (WS reconnect resync)
+  POST /api/jobs/{id}/cancel                      request cancellation
+  DELETE /api/jobs/{id}                           remove + clean artifacts
+  WS   /api/jobs/{id}/events                      ProgressEvent stream (with replay)
+  GET  /api/videos                                stream original video (Range)
+  GET  /api/artifacts/{job_id}/{path}             serve segments.json / clips / viz.mp4
+  GET  /api/jobs/{id}/clips                       list clip artifacts (plan 002)
+  GET  /api/jobs/{id}/clips/{seg_id}/stream       H.264 preview stream (Range)
+  GET  /api/jobs/{id}/clips/{seg_id}/thumbnail.jpg lazy mid-frame JPEG
+  POST /api/jobs/{id}/clips:cleanup               wipe clips/ subdir
 """
 from __future__ import annotations
 
 import mimetypes
+import shutil
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
+from .clip_codec import generate_thumbnail
 from .jobs import JobManager
-from .schemas import JobAccepted, JobCreate, JobInfo
+from .schemas import ClipCleanupResult, ClipInfo, JobAccepted, JobCreate, JobInfo
 
 
 SERVICE_VERSION = "0.1.0"
@@ -132,6 +138,91 @@ def create_app(jobs: JobManager, data_dir: Path) -> FastAPI:
             raise HTTPException(404, f"artifact 不存在: {rel_path}")
         mt, _ = mimetypes.guess_type(str(target))
         return FileResponse(target, media_type=mt or "application/octet-stream")
+
+    # ── clips (plan 002) ───────────────────────────────────────────────
+    # listing glob is `clip_[0-9][0-9][0-9].mp4` so it naturally excludes
+    # `_h264`, `_annotated`, and `.thumb.*` variants (those have a
+    # different suffix before .mp4 / are a different extension).
+    @app.get("/api/jobs/{job_id}/clips", response_model=List[ClipInfo])
+    def list_clips(job_id: str) -> List[ClipInfo]:
+        rec = jobs.get(job_id)
+        if rec is None:
+            raise HTTPException(404, f"job 不存在: {job_id}")
+        clips_dir = rec.out_dir / "clips"
+        if not clips_dir.exists() or not clips_dir.is_dir():
+            return []
+        out: List[ClipInfo] = []
+        for p in sorted(clips_dir.glob("clip_[0-9][0-9][0-9].mp4")):
+            seg_id = int(p.stem.split("_")[1])
+            stem_id = f"clip_{seg_id:03d}"
+            out.append(
+                ClipInfo(
+                    seg_id=seg_id,
+                    exists=True,
+                    size_bytes=p.stat().st_size,
+                    playable=(clips_dir / f"{stem_id}_h264.mp4").exists(),
+                    annotated=(clips_dir / f"{stem_id}_annotated.mp4").exists(),
+                    thumb_ready=(clips_dir / f"{stem_id}.thumb.jpg").exists(),
+                )
+            )
+        return out
+
+    @app.get("/api/jobs/{job_id}/clips/{seg_id}/stream")
+    def stream_clip(job_id: str, seg_id: int, request: Request) -> StreamingResponse:
+        rec = jobs.get(job_id)
+        if rec is None:
+            raise HTTPException(404, f"job 不存在: {job_id}")
+        # path: numeric seg_id only — FastAPI will coerce; bad input → 422
+        path = rec.out_dir / "clips" / f"clip_{seg_id:03d}_h264.mp4"
+        if not path.exists() or not path.is_file():
+            raise HTTPException(
+                404,
+                "clip 无 H.264 预览（转码不可用），请用原视频 timecode 定位",
+            )
+        return _range_stream(path, request)
+
+    @app.get("/api/jobs/{job_id}/clips/{seg_id}/thumbnail.jpg")
+    def clip_thumbnail(job_id: str, seg_id: int) -> FileResponse:
+        rec = jobs.get(job_id)
+        if rec is None:
+            raise HTTPException(404, f"job 不存在: {job_id}")
+        clips_dir = rec.out_dir / "clips"
+        mp4 = clips_dir / f"clip_{seg_id:03d}.mp4"
+        thumb = clips_dir / f"clip_{seg_id:03d}.thumb.jpg"
+        if not mp4.exists() or not mp4.is_file():
+            raise HTTPException(404, f"clip 不存在: seg_id={seg_id}")
+        if not thumb.exists():
+            ok = generate_thumbnail(mp4, thumb)
+            if not ok or not thumb.exists():
+                raise HTTPException(404, "缩略图生成失败")
+        return FileResponse(thumb, media_type="image/jpeg")
+
+    # Note the colon in the path — keeps `cleanup` from being mistaken
+    # for a numeric seg_id by a future `GET /clips/{seg_id}` route.
+    @app.post("/api/jobs/{job_id}/clips:cleanup", response_model=ClipCleanupResult)
+    def cleanup_clips(job_id: str) -> ClipCleanupResult:
+        rec = jobs.get(job_id)
+        if rec is None:
+            raise HTTPException(404, f"job 不存在: {job_id}")
+        if rec.state in ("queued", "running"):
+            raise HTTPException(
+                409,
+                f"job 状态为 {rec.state}，clips 可能仍在写入，禁止清理；请先 cancel 或等待完成",
+            )
+        clips_dir = rec.out_dir / "clips"
+        if not clips_dir.exists() or not clips_dir.is_dir():
+            return ClipCleanupResult(deleted_count=0, freed_bytes=0)
+        deleted = 0
+        freed = 0
+        for f in clips_dir.rglob("*"):
+            if f.is_file():
+                try:
+                    freed += f.stat().st_size
+                except OSError:
+                    pass
+                deleted += 1
+        shutil.rmtree(clips_dir, ignore_errors=True)
+        return ClipCleanupResult(deleted_count=deleted, freed_bytes=freed)
 
     return app
 

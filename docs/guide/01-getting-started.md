@@ -10,7 +10,7 @@ Five minutes from `git clone` to first result.
 | Node.js | ≥ 18 | Electron 31 + electron-vite |
 | Git | any | clone the repo |
 | **git-lfs** | **required** | `backend/models/{rtmdet,rtmpose}-m-*.onnx` (104 MB + 52 MB) are Git LFS-tracked. A plain `git clone` gives you 134-byte pointer text files, not the real binaries — the ONNX loaders will fail. Either install `git-lfs` and run `git lfs pull`, or use `scripts/fetch-model.sh` (handles both MediaPipe + LFS for you). |
-| ffmpeg | not needed | OpenCV bundles its own codec stack |
+| ffmpeg | optional (auto-bundled) | Needed only for clip in-GUI playback. The `imageio-ffmpeg` pip wheel ships a static ffmpeg binary — no system install required. Without ffmpeg, the Electron GUI falls back to "seek the original video to the segment start_timecode" for unplayable clips; clips remain downloadable. See [04 · REST API](04-rest-api.md#clip-playback). |
 | **mediapipe** | **== 0.10.35** (pinned in `backend/requirements.txt`) | MediaPipe **1.0** wheel has a regression on Apple Silicon that aborts in `TensorsToDetectionsCalculator::Open()`. See [07 · Troubleshooting](07-troubleshooting.md#apple-silicon-metal-delegate-regression). Don't `pip install --upgrade mediapipe` without re-reading that section. |
 
 ## 1. Clone
