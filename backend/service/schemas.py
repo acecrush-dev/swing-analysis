@@ -73,7 +73,7 @@ class JobInfo(BaseModel):
 
 class ProgressEvent(BaseModel):
     """WebSocket event payload."""
-    type: str  # job.started | pose.progress | segment.emitted | job.completed | job.failed | job.cancelled
+    type: str  # job.started | pose.progress | segment.emitted | clip.annotated | clip.generated | clip.progress | job.completed | job.failed | job.cancelled
     job_id: str
     data: Dict[str, Any] = Field(default_factory=dict)
 

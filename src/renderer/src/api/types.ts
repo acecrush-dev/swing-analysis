@@ -66,6 +66,15 @@ export interface ClipInfo {
   thumb_ready: boolean;
 }
 
+// plan 003 — per-clip annotation stage progress. One entry per currently
+// running clip annotation; key in App.tsx's clipProc map is seg_id.
+export interface ClipProcessingState {
+  seg_id: number;
+  stage: 'rtmdet' | 'pose' | 'rtmdet+pose';
+  frame: number;
+  total: number;   // 0 = 未知（前端不定长显示）
+}
+
 export interface ClipCleanupResult {
   deleted_count: number;
   freed_bytes: number;
@@ -76,6 +85,7 @@ export type ProgressEvent =
   | { type: 'pose.progress'; job_id: string; data: { frames: number; total: number; fps: number; eta_sec: number | null; segments_emitted: number } }
   | { type: 'segment.emitted'; job_id: string; data: { segment: Segment } }
   | { type: 'clip.annotated'; job_id: string; data: { seg_id: number; clip_in: string; clip_annotated: string; frames: number; bbox: boolean; skel: boolean; skel_backend: 'rtmpose' | 'mediapipe' } }
+  | { type: 'clip.progress'; job_id: string; data: ClipProcessingState }
   | { type: 'clip.generated'; job_id: string; data: ClipInfo }
   | { type: 'job.completed'; job_id: string; data: { segment_count: number } }
   | { type: 'job.failed'; job_id: string; data: { error: string } }

@@ -173,6 +173,13 @@ class JobManager:
             # time (rather than waiting for job.completed + listClips).
             self._broadcast(rec, "clip.generated", d)
 
+        def on_clip_progress(d: Dict) -> None:
+            # plan 003 — per-clip annotation stage progress (RTMDet/pose
+            # frames). Carries {seg_id, stage, frame, total} — the GUI
+            # advances the inner progress bar for that seg_id and removes
+            # the entry on the matching `clip.generated` event.
+            self._broadcast(rec, "clip.progress", d)
+
         try:
             payload = run_pipeline(
                 Path(rec.video_path),
@@ -183,6 +190,7 @@ class JobManager:
                 on_segment=on_segment,
                 on_clip_annotated=on_clip_annotated,
                 on_clip_extracted=on_clip_extracted,
+                on_clip_progress=on_clip_progress,
                 should_cancel=lambda: rec._cancel_flag.is_set(),
             )
             if rec._cancel_flag.is_set():

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { SwingClient } from './api/client';
-import { DEFAULT_PARAMS, type ClipInfo, type JobParams, type Segment } from './api/types';
+import { DEFAULT_PARAMS, type ClipInfo, type ClipProcessingState, type JobParams, type Segment } from './api/types';
 import { VideoPicker } from './components/VideoPicker';
 import { ParamsForm } from './components/ParamsForm';
 import { ProgressPanel } from './components/ProgressPanel';
@@ -53,6 +53,10 @@ export default function App() {
   // Clips (plan 002)
   const [clips, setClips] = useState<ClipInfo[]>([]);
   const [activeClip, setActiveClip] = useState<ClipInfo | null>(null);
+  // plan 003 — per-clip annotation stage progress, keyed by seg_id.
+  // Populated by `clip.progress` WS events; cleared by `clip.generated`
+  // (for that seg_id) and on every job terminal event.
+  const [clipProc, setClipProc] = useState<Record<number, ClipProcessingState>>({});
   const [logLines, setLogLines] = useState<string[]>([]);
   // Viz mode: video player shows the pipeline-rendered viz.mp4 instead
   // of the original video / a clip. Set when the user clicks the
@@ -124,6 +128,7 @@ export default function App() {
     setVizMode(false);
     setLogLines([]);
     setProgress(null);
+    setClipProc({});
     setJobState('queued');
     try {
       const r = await client.createJob(videoPath, params);
@@ -161,6 +166,25 @@ export default function App() {
             if (e.type === 'clip.annotated') {
               pushLog(`🎯 clip #${data.seg_id} 标注完成`);
             }
+            if (e.type === 'clip.progress') {
+              // plan 003 — per-clip annotation stage progress. Keyed by
+              // seg_id; concurrent clips (max_workers=2) ride side by side
+              // in the ProgressPanel inner bars.
+              const sid = typeof data.seg_id === 'number' ? data.seg_id : 0;
+              if (sid > 0 && typeof data.frame === 'number') {
+                const stage: ClipProcessingState['stage'] =
+                  data.stage === 'rtmdet' || data.stage === 'pose'
+                    ? data.stage
+                    : 'rtmdet+pose';
+                const fp: ClipProcessingState = {
+                  seg_id: sid,
+                  stage,
+                  frame: data.frame,
+                  total: typeof data.total === 'number' ? data.total : 0,
+                };
+                setClipProc((prev) => ({ ...prev, [sid]: fp }));
+              }
+            }
             if (e.type === 'clip.generated') {
               const info: ClipInfo = {
                 seg_id: typeof data.seg_id === 'number' ? data.seg_id : 0,
@@ -177,19 +201,30 @@ export default function App() {
                 });
                 pushLog(`🎬 clip #${info.seg_id} 生成${info.playable ? ' (H.264 ✓)' : ' (mp4v only)'}`);
               }
+              // plan 003 — clip is fully done (extracted + annotated +
+              // H.264 attempted); drop its inner progress bar.
+              setClipProc((prev) => {
+                if (!(info.seg_id in prev)) return prev;
+                const next = { ...prev };
+                delete next[info.seg_id];
+                return next;
+              });
             }
             if (e.type === 'job.completed') {
               setJobState('done');
+              setClipProc({});
               pushLog(`✓ job 完成 · 共 ${data.segment_count ?? '?'} 段`);
             }
             if (e.type === 'job.failed') {
               setJobState('failed');
+              setClipProc({});
               const msg = String(data.error ?? 'unknown');
               setError(msg);
               pushLog(`✗ job 失败: ${msg}`);
             }
             if (e.type === 'job.cancelled') {
               setJobState('cancelled');
+              setClipProc({});
               pushLog(`⊘ job 取消`);
             }
           } catch (err) {
@@ -204,6 +239,9 @@ export default function App() {
               if (!info) return;
               setJobState(info.state);
               setSegments(info.segments ?? []);
+              // plan 003 — clipProc is a per-event live stream artifact;
+              // on reconnect we clear and let fresh events rebuild it.
+              setClipProc({});
               pushLog(`↻ WS 重连 · state=${info.state} · ${(info.segments ?? []).length} 段`);
             }).catch((err) => {
               // eslint-disable-next-line no-console
@@ -254,6 +292,7 @@ export default function App() {
       setClips([]);
       setActiveClip(null);
       setProgress(null);
+      setClipProc({});
       setVizMode(false);
       setJobState('idle');
     } catch (e: any) {
@@ -447,6 +486,12 @@ export default function App() {
   const thumbUrl = (segId: number) =>
     client && jobId ? client.clipThumbUrl(jobId, segId) : '';
 
+  // plan 003 — outer queue bar (done/discovered) is purely derived;
+  // inner per-clip bars are pulled from the clipProc map (see WS handler).
+  // Strictly the user's spec: shows dual bars only when a clip annotation
+  // flag is on, not for extract-only runs.
+  const clipBarsEnabled = params.save_clips && (params.clip_bbox || params.clip_skel);
+
   return (
     <div
       style={{
@@ -563,6 +608,10 @@ export default function App() {
           onStart={startJob}
           onCancel={cancelJob}
           disabled={!videoPath || jobState === 'running'}
+          clipBarsEnabled={clipBarsEnabled}
+          clipsDone={clips.length}
+          clipsDiscovered={segments.length}
+          clipProcessing={clipProc}
         />
         <ClipsBar
           clips={clips}

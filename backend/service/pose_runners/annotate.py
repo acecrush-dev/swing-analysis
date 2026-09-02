@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 import cv2
 import numpy as np
@@ -94,6 +94,7 @@ class ClipAnnotator:
         bbox: bool = True,
         skel: bool = True,
         skel_backend: str = "rtmpose",  # "rtmpose" | "mediapipe"
+        progress_cb: Optional[Callable[[str, int, int], None]] = None,
     ) -> AnnotateResult:
         """Run bbox + skeleton overlay on one clip; write to clip_out.
 
@@ -104,6 +105,13 @@ class ClipAnnotator:
           skel:           run pose estimation and draw skeleton
           skel_backend:   "rtmpose" → uses RtmposeRunner (COCO-13)
                           "mediapipe" → uses MediaPipePoseRunner (33-pt, full-frame)
+          progress_cb:    optional callback `progress_cb(stage, frames_processed,
+                          total_frames)`. stage ∈ {"rtmdet","pose","rtmdet+pose"}.
+                          total_frames == 0 means unknown. Called once with
+                          (stage, 0, total) when the writer is ready, then
+                          every 5 frames, and once more with the final count
+                          before returning. The callback must not raise and
+                          must not block — callers wrap it in try/except.
 
         Returns AnnotateResult with `frames_processed` and `output_path`.
         """
@@ -116,12 +124,20 @@ class ClipAnnotator:
             clip_out.write_bytes(clip_in.read_bytes())
             return AnnotateResult(clip_in, clip_out, 0, [])
 
+        # plan 003 — stage describes which annotations are enabled for THIS
+        # clip. rtmdet and pose run on the same frame loop in lockstep, so
+        # the stage describes the combination, not separate passes.
+        stage = "rtmdet+pose" if (bbox and skel) else ("rtmdet" if bbox else "pose")
+
         cap = cv2.VideoCapture(str(clip_in))
         if not cap.isOpened():
             raise RuntimeError(f"无法打开 clip: {clip_in}")
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
         w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if total_frames < 0:
+            total_frames = 0
 
         # Lazy-load models on first use.
         if bbox and self._rtmdet is None:
@@ -141,6 +157,12 @@ class ClipAnnotator:
         if not writer.isOpened():
             cap.release()
             raise RuntimeError(f"无法写 {clip_out}")
+
+        if progress_cb is not None:
+            try:
+                progress_cb(stage, 0, total_frames)
+            except Exception:  # noqa: BLE001
+                pass
 
         frames = 0
         issues: List[str] = []
@@ -173,9 +195,19 @@ class ClipAnnotator:
 
                 writer.write(canvas)
                 frames += 1
+                if progress_cb is not None and (frames % 5 == 0):
+                    try:
+                        progress_cb(stage, frames, total_frames)
+                    except Exception:  # noqa: BLE001
+                        pass
         finally:
             cap.release()
             writer.release()
+        if progress_cb is not None:
+            try:
+                progress_cb(stage, frames, total_frames)
+            except Exception:  # noqa: BLE001
+                pass
         return AnnotateResult(clip_in, clip_out, frames, issues)
 
 
@@ -188,7 +220,11 @@ def annotate_clip(
     skel_backend: str = "rtmpose",
     out_path: Optional[Path] = None,
     annotator: Optional[ClipAnnotator] = None,
+    progress_cb: Optional[Callable[[str, int, int], None]] = None,
 ) -> AnnotateResult:
     """Functional entry point — convenient for one-shot calls."""
     ann = annotator or ClipAnnotator()
-    return ann.annotate_clip(clip_in, out_path, bbox=bbox, skel=skel, skel_backend=skel_backend)
+    return ann.annotate_clip(
+        clip_in, out_path, bbox=bbox, skel=skel, skel_backend=skel_backend,
+        progress_cb=progress_cb,
+    )

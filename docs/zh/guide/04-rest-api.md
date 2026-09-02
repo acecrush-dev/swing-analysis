@@ -123,6 +123,8 @@ job 当前是 `running` 时拒 (`409`)。先 cancel 再 DELETE。成功后清理
 | `pose.progress` | `{phase, frames, total, fps, eta_sec, segments_emitted}` |
 | `segment.emitted` | `{segment: Segment}` (每段一条,按到达顺序) |
 | `clip.annotated` | `{seg_id, clip_in, clip_annotated, frames, bbox, skel, skel_backend}` (仅当 `clip_bbox` 或 `clip_skel` 开启;每段标注完成后发一次) |
+| `clip.progress` | `{seg_id, stage, frame, total}` (plan 003 — 每段标注阶段的逐帧进度。`stage` ∈ `{rtmdet, pose, rtmdet+pose}` 表示该 clip 启用的标注组合;RTMDet 与姿态骨架在同一帧循环内先后执行,不独立计帧。`frame=0` 在 writer 就绪时发一次,循环内每 5 帧一次,函数返回前补发一次最终帧数。`total=0` 表示帧数未知。该行的关闭以 `clip.generated` 事件为准,**不**单独发 done) |
+| `clip.generated` | `{seg_id, exists, size_bytes, playable, annotated, thumb_ready}` (每段,提取 + H.264 转码尝试完成后发一次) |
 | `job.completed` | `{segment_count}` |
 | `job.failed` | `{error}` (异常 repr) |
 | `job.cancelled` | `{}` |

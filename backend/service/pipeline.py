@@ -38,6 +38,7 @@ ProgressCb = Callable[[Dict], None]
 SegmentCb = Callable[[Dict], None]
 ClipAnnotatedCb = Callable[[Dict], None]
 ClipExtractedCb = Callable[[Dict], None]  # plan 002 (M13): per-clip WS push
+ClipProgressCb = Callable[[Dict], None]  # plan 003: per-clip annotation stage progress
 
 
 class JobCancelled(Exception):
@@ -77,9 +78,14 @@ def run_pipeline(
     on_segment: Optional[SegmentCb] = None,
     on_clip_annotated: Optional[ClipAnnotatedCb] = None,
     on_clip_extracted: Optional[ClipExtractedCb] = None,
+    on_clip_progress: Optional[ClipProgressCb] = None,
     should_cancel: Optional[Callable[[], bool]] = None,
 ) -> Dict:
     """Run Pass 1 + Pass 1.5 + (optional) Pass 2 + (optional) clip annotation.
+
+    `on_clip_progress` (plan 003) fires from inside each per-clip annotation
+    thread — payload: {seg_id, stage, frame, total}. Threading note: the
+    callback is responsible for crossing to the WS loop (callers wrap it).
 
     Returns the segments.json payload as a dict. Raises JobCancelled if
     should_cancel() ever returns True mid-run.
@@ -199,6 +205,7 @@ def run_pipeline(
                             annotator, p["clip_bbox"], p["clip_skel"], p["skel_backend"],
                             on_clip_annotated,
                             on_clip_extracted,
+                            on_clip_progress,
                         )
 
                 if progress_cb is not None:
@@ -237,6 +244,7 @@ def run_pipeline(
                         annotator, p["clip_bbox"], p["clip_skel"], p["skel_backend"],
                         on_clip_annotated,
                         on_clip_extracted,
+                        on_clip_progress,
                     )
         finally:
             # Shutdown the executor LAST (and only once). It MUST be after
@@ -368,12 +376,16 @@ def _extract_and_maybe_annotate(
     skel_backend: str,
     on_clip_annotated: Optional[ClipAnnotatedCb] = None,
     on_clip_extracted: Optional[ClipExtractedCb] = None,
+    on_clip_progress: Optional[ClipProgressCb] = None,
 ) -> None:
     """Background task: extract one clip, then optionally annotate it.
 
     Extracted clip lives at `<clips_dir>/clip_NNN.mp4`.
     If annotation enabled: writes `<clips_dir>/clip_NNN_annotated.mp4` and
-    notifies the caller via `on_clip_annotated`.
+    notifies the caller via `on_clip_annotated`. Plan 003 adds
+    `on_clip_progress` carrying {seg_id, stage, frame, total} payloads
+    forwarded from `annotator.annotate_clip` (fired at frame=0, every 5
+    frames, and once with the final count before this function returns).
     On completion (extracted + H.264 transcode attempted) fires
     `on_clip_extracted` with a ClipInfo payload so the GUI can pop a
     preview card into the bottom ClipsBar in real time (plan 002 M13).
@@ -386,7 +398,27 @@ def _extract_and_maybe_annotate(
 
     if annotator is not None and (bbox or skel):
         try:
-            res = annotator.annotate_clip(clip_mp4, bbox=bbox, skel=skel, skel_backend=skel_backend)
+            # plan 003 — per-clip annotation stage progress bridge.
+            def _ann_progress(stage: str, frame: int, total: int) -> None:
+                if on_clip_progress is None:
+                    return
+                try:
+                    on_clip_progress({
+                        "seg_id": seg.seg_id,
+                        "stage": stage,
+                        "frame": frame,
+                        "total": total,
+                    })
+                except Exception as exc:  # noqa: BLE001
+                    print(f"  ✗ clip {seg.seg_id:03d} clip.progress cb failed: {exc!r}", flush=True)
+
+            res = annotator.annotate_clip(
+                clip_mp4,
+                bbox=bbox,
+                skel=skel,
+                skel_backend=skel_backend,
+                progress_cb=_ann_progress,
+            )
             if on_clip_annotated is not None:
                 on_clip_annotated({
                     "seg_id": seg.seg_id,

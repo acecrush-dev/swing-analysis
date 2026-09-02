@@ -125,6 +125,8 @@ Event types:
 | `pose.progress` | `{phase, frames, total, fps, eta_sec, segments_emitted}` |
 | `segment.emitted` | `{segment: Segment}` (one per cycle, in arrival order) |
 | `clip.annotated` | `{seg_id, clip_in, clip_annotated, frames, bbox, skel, skel_backend}` (only when `clip_bbox` or `clip_skel` was set; per-clip after annotation finishes) |
+| `clip.progress` | `{seg_id, stage, frame, total}` (plan 003 — per-clip annotation stage progress; `stage` ∈ `{rtmdet, pose, rtmdet+pose}` reflects the active flag combo for this clip; fires once with `frame=0` when the writer opens, every 5 frames inside the read loop, and once more with the final frame count before the clip returns; `total=0` means frame count unknown; the row is closed by the matching `clip.generated` — there is **no** separate `done:true`) |
+| `clip.generated` | `{seg_id, exists, size_bytes, playable, annotated, thumb_ready}` (per-clip, on extraction + H.264 transcode attempt) |
 | `job.completed` | `{segment_count}` |
 | `job.failed` | `{error}` (repr of the exception) |
 | `job.cancelled` | `{}` |

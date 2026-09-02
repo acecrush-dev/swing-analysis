@@ -62,6 +62,7 @@ export function HelpPanel({ onClose }: Props) {
                 <li><b>预览 clip</b>：完成后底部「Clips」区会逐个冒出缩略图卡片，点击卡片左上的黄字水印标记当前正在播的 clip。</li>
                 <li><b>回原视频</b>：点水印上的「↩ 回原始视频」按钮（或选周期列表里的 segment）。</li>
                 <li><b>导出包</b>：菜单 File → Export Package… 把 segments.json + clips + viz.mp4 打成 zip。</li>
+                <li><b>双进度条</b>：勾选「clip 叠加 RTMDet 人物框」或「clip 叠加骨架」后，进度区会出现两行 — 外层是 clip 队列（已完成/已发现），内层是当前 clip 的标注逐帧进度（每 5 帧刷新一次）。全部完成或 job 结束后两行自动收起。</li>
               </ul>
             </Section>
 
