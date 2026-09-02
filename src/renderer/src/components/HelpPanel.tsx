@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { useI18n } from '../i18n';
 
 interface Props { onClose: () => void; }
 
@@ -8,6 +9,7 @@ interface Props { onClose: () => void; }
  * on Esc, on the backdrop click, or on the × button.
  */
 export function HelpPanel({ onClose }: Props) {
+  const { t } = useI18n();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
@@ -41,7 +43,7 @@ export function HelpPanel({ onClose }: Props) {
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <h2 style={{ margin: 0, fontSize: 18 }}>❓ 帮助 / 参数说明</h2>
+              <h2 style={{ margin: 0, fontSize: 18 }}>{t('help.title')}</h2>
               <button
                 onClick={onClose}
                 style={{
@@ -54,59 +56,60 @@ export function HelpPanel({ onClose }: Props) {
               </button>
             </div>
 
-            <Section title="🛠 用法速览">
+            <Section title={t('help.section.usage')}>
               <ul style={{ paddingLeft: 20, margin: '6px 0' }}>
-                <li><b>选视频</b>：点「📁 选择视频…」按钮，或直接把视频文件拖到窗口里。窗口在拖动过程中会变黄，提示拖入位置。</li>
-                <li><b>配参数</b>：右侧「参数」面板设置切分算法参数。</li>
-                <li><b>开始切分</b>：点「▶ 开始切分」。进度条和事件日志实时更新。</li>
-                <li><b>预览 clip</b>：完成后底部「Clips」区会逐个冒出缩略图卡片，点击卡片左上的黄字水印标记当前正在播的 clip。</li>
-                <li><b>回原视频</b>：点水印上的「↩ 回原始视频」按钮（或选周期列表里的 segment）。</li>
-                <li><b>导出包</b>：菜单 File → Export Package… 把 segments.json + clips + viz.mp4 打成 zip。</li>
-                <li><b>双进度条</b>：勾选「clip 叠加 RTMDet 人物框」或「clip 叠加骨架」后，进度区会出现两行 — 外层是 clip 队列（已完成/已发现），内层是当前 clip 的标注逐帧进度（每 5 帧刷新一次）。全部完成或 job 结束后两行自动收起。</li>
+                <li dangerouslySetInnerHTML={{ __html: t('help.item.pickVideo') }} />
+                <li dangerouslySetInnerHTML={{ __html: t('help.item.params') }} />
+                <li dangerouslySetInnerHTML={{ __html: t('help.item.start') }} />
+                <li dangerouslySetInnerHTML={{ __html: t('help.item.previewClip') }} />
+                <li dangerouslySetInnerHTML={{ __html: t('help.item.returnOriginal') }} />
+                <li dangerouslySetInnerHTML={{ __html: t('help.item.export') }} />
+                <li dangerouslySetInnerHTML={{ __html: t('help.item.dualBars') }} />
+                <li dangerouslySetInnerHTML={{ __html: t('help.item.detach') }} />
               </ul>
             </Section>
 
-            <Section title="🎛 参数说明">
+            <Section title={t('help.section.params')}>
               <ParamTable rows={[
-                ['v_swing', '切分判定阈值（手腕速度）', '越大越宽松；越小越容易切碎'],
-                ['gap_merge', '两段距离多近则合并', '单位 s。相邻两段 < 该值合并为一段'],
-                ['max_bridge', '间断桥接上限', '单位 s。中断超过此值视为新段'],
-                ['min_peak', '波峰最小高度', '低于此值的速度峰值不算挥拍'],
-                ['smooth_alpha', 'EMA 平滑系数', '越大跟随越紧；越小越滞后'],
-                ['max_lost_frames', '丢失帧容忍', 'wrist 连续丢失 ≤ 此值仍桥接'],
-                ['min_dur / max_dur', '段时长上下限', '单位 s。超出会被丢弃或合并'],
-                ['buf_before / buf_after', '段前后缓冲', '单位 s。clip 起始/结束各延伸该值'],
-                ['skip', '采样步长', '每 N 帧跑一次 pose detection'],
-                ['max_frames', '最大帧数', '0 = 全跑；>0 = 只跑前 N 帧'],
-                ['save_clips', '切出每段 clip mp4', '✅ 勾选才能在底部看到 clips'],
-                ['viz_video', '生成整段 viz.mp4', '勾选后才能用「播放 viz.mp4」按钮'],
-                ['clip_bbox', 'clip 叠加 RTMDet 人物框', '需要 save_clips 同时勾'],
-                ['clip_skel', 'clip 叠加骨架', '需要 save_clips 同时勾'],
-                ['skel_backend', '骨架后端', 'rtmpose（快/COCO-13）或 mediapipe（准/33 点）'],
+                ['v_swing', 'Cut threshold (wrist speed)', 'Higher = looser; lower = more fragments'],
+                ['gap_merge', 'Merge gap (s) between adjacent swings', 'Two segments < this apart merge'],
+                ['max_bridge', 'Bridge upper bound (s)', 'A break longer than this starts a new segment'],
+                ['min_peak', 'Min peak height', 'Peaks below this are not counted as swings'],
+                ['smooth_alpha', 'EMA smoothing', 'Higher = tighter follow; lower = more lag'],
+                ['max_lost_frames', 'Lost-frame tolerance', 'Bridges wrist losses ≤ this many frames'],
+                ['min_dur / max_dur', 'Segment duration bounds', 'Out-of-range segments are dropped / merged'],
+                ['buf_before / buf_after', 'Pre/post buffer (s)', 'Clip start/end extend by this much'],
+                ['skip', 'Sampling step', 'Run pose detection every N frames'],
+                ['max_frames', 'Max frames', '0 = all; >0 = only first N'],
+                ['save_clips', 'Save per-segment clip mp4', 'Required for the clips bar'],
+                ['viz_video', 'Render whole viz.mp4', 'Required for «Play viz.mp4»'],
+                ['clip_bbox', 'Overlay RTMDet bbox on clips', 'Needs save_clips too'],
+                ['clip_skel', 'Overlay skeleton on clips', 'Needs save_clips too'],
+                ['skel_backend', 'Skeleton backend', 'rtmpose (fast / COCO-13) or mediapipe (precise / 33 pts)'],
               ]} />
             </Section>
 
-            <Section title="🧰 菜单">
+            <Section title={t('help.section.menu')}>
               <ul style={{ paddingLeft: 20, margin: '6px 0' }}>
-                <li><b>System → Open File…</b>（Ctrl/Cmd+O）：选视频。</li>
-                <li><b>System → Export Package…</b>（Ctrl/Cmd+E）：把当前 job 打成 zip。</li>
-                <li><b>System → Quit</b>（Ctrl/Cmd+Q / Alt+F4）：退出。</li>
-                <li><b>Help → Help Content</b>：跳到文档站 / 项目主页。</li>
-                <li><b>Help → About swing-analysis</b>：软件名 + 版本信息。</li>
+                <li dangerouslySetInnerHTML={{ __html: t('help.item.menu.open') }} />
+                <li dangerouslySetInnerHTML={{ __html: t('help.item.menu.export') }} />
+                <li dangerouslySetInnerHTML={{ __html: t('help.item.menu.quit') }} />
+                <li dangerouslySetInnerHTML={{ __html: t('help.item.menu.help') }} />
+                <li dangerouslySetInnerHTML={{ __html: t('help.item.menu.about') }} />
               </ul>
             </Section>
 
-            <Section title="💡 提示">
+            <Section title={t('help.section.tips')}>
               <ul style={{ paddingLeft: 20, margin: '6px 0' }}>
-                <li>切分运行中「🧹 清理」按钮会自动灰掉 —— clips 还在生成。</li>
-                <li>viz / segments.json / clips/ 下载链接只在文件真正写盘后才显示（HEAD 探测）。</li>
-                <li>拖入非视频文件会弹错「不是视频文件（.ext）…」并保持原选择不变。</li>
-                <li>暗/亮主题切换在右上角 🌙/☀️ —— 状态徽章在两种主题下都保持高对比。</li>
+                <li>{t('help.tip.cleanup')}</li>
+                <li>{t('help.tip.heads')}</li>
+                <li>{t('help.tip.badext')}</li>
+                <li>{t('help.tip.theme')}</li>
               </ul>
             </Section>
 
             <div style={{ marginTop: 16, textAlign: 'right', fontSize: 12, color: 'var(--text-dim)' }}>
-              按 Esc 或点空白处关闭
+              {t('help.close')}
             </div>
           </div>
         </div>
@@ -127,9 +130,9 @@ function ParamTable({ rows }: { rows: [string, string, string][] }) {
     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, marginTop: 4 }}>
       <thead>
         <tr style={{ borderBottom: '1px solid var(--border)' }}>
-          <th style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-muted)' }}>名称</th>
-          <th style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-muted)' }}>含义</th>
-          <th style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-muted)' }}>建议</th>
+          <th style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-muted)' }}>Name</th>
+          <th style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-muted)' }}>Meaning</th>
+          <th style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-muted)' }}>Advice</th>
         </tr>
       </thead>
       <tbody>

@@ -2,6 +2,7 @@ import type { ClipInfo, Segment } from '../api/types';
 import type { SwingClient } from '../api/client';
 import { useEffect, useRef } from 'react';
 import { ClipPlayer } from './ClipPlayer';
+import { useI18n } from '../i18n';
 
 interface Props {
   videoPath: string | null;
@@ -34,6 +35,7 @@ export function VideoPicker({
   vizMode,
   videoSrc,
 }: Props) {
+  const { t } = useI18n();
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -73,7 +75,7 @@ export function VideoPicker({
           borderRadius: 4,
           cursor: 'pointer',
           fontSize: 13,
-        }}>📁 选择视频…</button>
+        }}>📁 {t('picker.pickVideo')}</button>
         {videoPath && <span style={{ opacity: 0.7, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{videoPath}</span>}
         {vizMode && (
           <span style={{
@@ -86,7 +88,7 @@ export function VideoPicker({
             fontWeight: 'bold',
             whiteSpace: 'nowrap',
           }}>
-            ▶ 播放 viz.mp4
+            ▶ {t('player.viz')}
           </span>
         )}
       </div>
@@ -123,7 +125,7 @@ export function VideoPicker({
           />
         ) : (
           <div style={{ color: 'var(--text-dim)', fontSize: 12, padding: 16 }}>
-            请选个视频文件，或选个 clip / viz 来看
+            {t('picker.empty')}
           </div>
         )}
         {activeClip && !vizMode && videoSrc && (

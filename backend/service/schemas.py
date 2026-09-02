@@ -21,11 +21,18 @@ class JobParams(BaseModel):
     skip: int = 1
     max_frames: int = 0
     save_clips: bool = False
-    viz_video: bool = False
+    viz_video: bool = True
     # clip annotation (optional, applied after extraction per clip)
     clip_bbox: bool = False        # RTMDet bbox overlay
     clip_skel: bool = False        # pose skeleton overlay
     skel_backend: str = "rtmpose"  # "rtmpose" | "mediapipe"
+    # Annotation colours — 6-hex-digit strings ("rrggbb" or "#rrggbb").
+    # Defaults (set in DEFAULT_PARAMS in pipeline.py) match the GUI
+    # Settings panel defaults: pink bbox, red/yellow/green pose sides.
+    color_bbox: Optional[str] = None
+    color_pose_left: Optional[str] = None
+    color_pose_right: Optional[str] = None
+    color_pose_body: Optional[str] = None
 
 
 class JobCreate(BaseModel):

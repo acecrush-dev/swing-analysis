@@ -1,4 +1,6 @@
 import type { ClipInfo, Segment } from '../api/types';
+import { useI18n } from '../i18n';
+import { Tooltip } from './Tooltip';
 
 interface Props {
   clip: ClipInfo;
@@ -13,13 +15,14 @@ interface Props {
  * Bright yellow text on the left so the user can never miss which clip
  * is on screen. Also visible when the clip is non-playable (mp4v) and
  * the GUI is just seeking the original video to the seg start — the
- * user should always see a "正在播放 clip #N" indicator.
+ * user should always see a "playing clip #N" indicator.
  */
 export function ClipPlayer({ clip, seg, onReturn }: Props) {
+  const { t } = useI18n();
   const tcLine = seg
     ? `${seg.start_timecode} → ${seg.end_timecode}`
     : `clip #${clip.seg_id}`;
-  const contact = seg ? ` · 击球 ${seg.contact_timecode}` : '';
+  const contact = seg ? ` · ${t('player.contactAt', { tc: seg.contact_timecode })}` : '';
   const playable = clip.playable;
   return (
     <div
@@ -54,25 +57,27 @@ export function ClipPlayer({ clip, seg, onReturn }: Props) {
           fontSize: 11,
           fontWeight: 'bold',
         }}>
-          原生格式
+          {t('grid.fmtWarn')}
         </span>
       )}
-      <button
-        onClick={(e) => { e.stopPropagation(); onReturn(); }}
-        style={{
-          background: 'var(--accent)',
-          color: 'var(--accent-fg)',
-          border: 'none',
-          borderRadius: 4,
-          padding: '4px 10px',
-          cursor: 'pointer',
-          fontSize: 12,
-          fontWeight: 'bold',
-          marginLeft: 4,
-        }}
-      >
-        ↩ 回原始视频
-      </button>
+      <Tooltip text={t('player.return')}>
+        <button
+          onClick={(e) => { e.stopPropagation(); onReturn(); }}
+          style={{
+            background: 'var(--accent)',
+            color: 'var(--accent-fg)',
+            border: 'none',
+            borderRadius: 4,
+            padding: '4px 10px',
+            cursor: 'pointer',
+            fontSize: 12,
+            fontWeight: 'bold',
+            marginLeft: 4,
+          }}
+        >
+          ↩
+        </button>
+      </Tooltip>
     </div>
   );
 }

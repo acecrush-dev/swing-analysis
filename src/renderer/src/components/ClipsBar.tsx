@@ -1,6 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ClipInfo, Segment } from '../api/types';
 import { ClipGrid } from './ClipGrid';
+import { Tooltip } from './Tooltip';
+import { toast } from './Toast';
+import { useI18n } from '../i18n';
 
 interface Props {
   clips: ClipInfo[];
@@ -14,18 +17,47 @@ interface Props {
   // Disables the cleanup button while a segmentation job is running
   // (the API would 409 anyway, but greying out the UI is friendlier).
   jobRunning?: boolean;
+  // Plan 004 — when the clips panel has been popped out into its own
+  // OS window, the docked ClipsBar collapses to a slim placeholder
+  // row instead of vanishing entirely (so the layout doesn't reflow).
+  detached?: boolean;
+  onDetach?: () => void;
+  onRecall?: () => void;
 }
 
-type DockMode = 'docked' | 'floating';
+// Sort clips by seg_id so concurrent annotations that finish out of
+// order still render in pipeline order. Without this, the user sees
+// e.g. clip #3, #1, #2 — confusing because seg_id is the natural
+// "this is the N-th swing" ordering.
+function clipsByOrder(clips: ClipInfo[]): ClipInfo[] {
+  return clips.slice().sort((a, b) => a.seg_id - b.seg_id);
+}
+
+const ICON_BTN: React.CSSProperties = {
+  background: 'var(--bg-elev)',
+  color: 'var(--text)',
+  border: '1px solid var(--border)',
+  borderRadius: 3,
+  padding: '2px 8px',
+  cursor: 'pointer',
+  fontSize: 13,
+  lineHeight: 1,
+};
+const ICON_BTN_DANGER: React.CSSProperties = {
+  ...ICON_BTN,
+  background: 'var(--danger-bg)',
+  color: 'var(--danger)',
+  border: '1px solid var(--danger-border)',
+};
 
 /**
- * Single-row clips bar.
+ * Single-row clips bar — docked only. (The previous 📌 悬浮 in-window
+ * float mode was removed: it never escaped the BrowserWindow frame,
+ * which was the original user complaint that led to plan 004. The
+ * ↗ detach button is now the only way to move clips off the dock.)
  *
- * - Default (docked): renders inline below the 开始切分 button in the
- *   left column. Single horizontal row; overflow scrolls horizontally.
- * - Floating: a draggable overlay positioned absolutely above the UI.
- *   User can drag by the header; toggle button in the header switches
- *   back to docked.
+ * Buttons are icon-only — full labels live in the `title` tooltip,
+ * which `useI18n` translates.
  */
 export function ClipsBar({
   clips,
@@ -37,22 +69,21 @@ export function ClipsBar({
   jobDone,
   saveClipsEnabled,
   jobRunning,
+  detached,
+  onDetach,
+  onRecall,
 }: Props) {
-  const [mode, setMode] = useState<DockMode>('docked');
-  const [pos, setPos] = useState<{ x: number; y: number }>({ x: 24, y: 24 });
-  const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
+  const { t } = useI18n();
   const barRef = useRef<HTMLDivElement>(null);
+  const ordered = useMemo(() => clipsByOrder(clips), [clips]);
 
-  const hasClips = clips.length > 0;
-  // Always render — even when no clips yet — so the user can always
-  // see where the bar lives and what its empty state means.
+  const hasClips = ordered.length > 0;
 
   const headerStyle: React.CSSProperties = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 6,
-    cursor: mode === 'floating' ? 'move' : 'default',
     userSelect: 'none',
   };
 
@@ -61,8 +92,7 @@ export function ClipsBar({
     color: 'var(--text)',
     padding: '8px 12px 10px 12px',
     borderTop: '1px solid var(--border)',
-    borderRadius: mode === 'floating' ? 8 : 0,
-    boxShadow: mode === 'floating' ? '0 8px 24px var(--shadow)' : 'none',
+    borderRadius: 0,
     // Cap the docked bar height — when cards wrap to many rows the
     // inner overflow:auto grows a vertical scrollbar instead of
     // pushing up the video area.
@@ -73,58 +103,44 @@ export function ClipsBar({
   const headerActions = (
     <>
       {hasClips && (
-        <button
-          onClick={(e) => { e.stopPropagation(); onCleanupClips(); }}
-          disabled={!!jobRunning}
-          title={jobRunning ? '切分进行中，clips 还在生成 —— 不能清理' : '删除该 job 的全部 clips'}
-          style={{
-            background: jobRunning ? 'var(--bg-elev)' : 'var(--danger-bg)',
-            color: jobRunning ? 'var(--text-dim)' : 'var(--danger)',
-            border: '1px solid ' + (jobRunning ? 'var(--border)' : 'var(--danger-border)'),
-            borderRadius: 3,
-            padding: '2px 8px',
-            cursor: jobRunning ? 'not-allowed' : 'pointer',
-            fontSize: 11,
-            marginRight: 6,
-            opacity: jobRunning ? 0.5 : 1,
-          }}
-        >
-          🧹 清理
-        </button>
+        // Clicking cleanup while a job is running no longer silently
+        // no-ops — it surfaces a toast asking the user to cancel first.
+        <Tooltip text={jobRunning ? t('btn.cleanupDisabled') : t('btn.cleanup')}>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (jobRunning) {
+                toast.warning(t('toast.cleanupCancelFirst'));
+              } else {
+                onCleanupClips();
+              }
+            }}
+            style={{
+              ...ICON_BTN_DANGER,
+              cursor: 'pointer',
+              opacity: jobRunning ? 0.5 : 1,
+              marginRight: 6,
+            }}
+          >
+            🧹
+          </button>
+        </Tooltip>
       )}
-      <button
-        onClick={(e) => { e.stopPropagation(); setMode(mode === 'docked' ? 'floating' : 'docked'); }}
-        style={{
-          background: '#222',
-          color: '#fff',
-          border: '1px solid #444',
-          borderRadius: 3,
-          padding: '2px 8px',
-          cursor: 'pointer',
-          fontSize: 11,
-        }}
-        title={mode === 'docked' ? '悬浮显示（可拖动）' : '停靠回原位'}
-      >
-        {mode === 'docked' ? '📌 悬浮' : '📍 停靠'}
-      </button>
+      <Tooltip text={t('btn.detach')}>
+        <button
+          onClick={(e) => { e.stopPropagation(); onDetach?.(); }}
+          style={{ ...ICON_BTN, marginRight: 6 }}
+        >
+          ↗
+        </button>
+      </Tooltip>
     </>
   );
 
   const headerEl = (
-    <div style={headerStyle} onMouseDown={(e) => {
-      // Only start drag in floating mode; left button only.
-      if (mode !== 'floating') return;
-      if (e.button !== 0) return;
-      dragRef.current = {
-        startX: e.clientX,
-        startY: e.clientY,
-        origX: pos.x,
-        origY: pos.y,
-      };
-      e.preventDefault();
-    }}>
+    <div style={headerStyle}>
       <h3 style={{ margin: 0, fontSize: 13 }}>
-        🎬 Clips {hasClips && <span style={{ opacity: 0.6 }}>({clips.length})</span>}
+        {t('clips.title')}{hasClips && <span style={{ opacity: 0.6 }}> ({ordered.length})</span>}
       </h3>
       <div onMouseDown={(e) => e.stopPropagation()}>{headerActions}</div>
     </div>
@@ -132,7 +148,7 @@ export function ClipsBar({
 
   const gridEl = hasClips ? (
     <ClipGrid
-      clips={clips}
+      clips={ordered}
       segments={segs}
       activeClip={activeClip}
       onSelectClip={onSelectClip}
@@ -151,55 +167,49 @@ export function ClipsBar({
       }}
     >
       {jobDone
-        ? (saveClipsEnabled
-            ? '本次未生成任何 clip（可能没切到段）。重新跑一段能产生 segments 的视频试试。'
-            : '参数区未勾选「切出每段 clip mp4」——勾上后重新跑一次即可。')
-        : (saveClipsEnabled
-            ? '等待 job 完成 —— 完成后这里会显示每个 clip 的第一帧预览卡片。'
-            : '参数区未勾选「切出每段 clip mp4」——勾上后重新跑一次即可。')}
+        ? (saveClipsEnabled ? t('clips.empty.doneNoSeg') : t('clips.empty.doneNoSave'))
+        : (saveClipsEnabled ? t('clips.empty.running') : t('clips.empty.runningNoSave'))}
     </div>
   );
 
-  useEffect(() => {
-    if (mode !== 'floating') return;
-    const onMove = (e: MouseEvent) => {
-      const d = dragRef.current;
-      if (!d) return;
-      const dx = e.clientX - d.startX;
-      const dy = e.clientY - d.startY;
-      setPos({ x: d.origX + dx, y: d.origY + dy });
-    };
-    const onUp = () => { dragRef.current = null; };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-  }, [mode]);
-
-  if (mode === 'docked') {
+  // Plan 004 — when the clips panel is detached, the docked ClipsBar
+  // collapses to a slim placeholder row so the layout stays put and
+  // the user has a clear way to recall the panel back to the main
+  // window.
+  if (detached) {
     return (
-      <div ref={barRef} style={{ ...bodyStyle, flexShrink: 0 }}>
-        {headerEl}
-        {gridEl}
+      <div
+        ref={barRef}
+        style={{
+          flexShrink: 0,
+          background: 'var(--bg-alt)',
+          borderTop: '1px solid var(--border)',
+          padding: '8px 12px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 8,
+          minHeight: 36,
+          color: 'var(--text-muted)',
+          fontSize: 12,
+          userSelect: 'none',
+        }}
+      >
+        <span>{t('clips.detachedPlaceholder')}</span>
+        <Tooltip text={t('btn.recall')}>
+          <button
+            onClick={() => onRecall?.()}
+            style={ICON_BTN}
+          >
+            📍
+          </button>
+        </Tooltip>
       </div>
     );
   }
 
-  // Floating overlay
   return (
-    <div
-      ref={barRef}
-      style={{
-        ...bodyStyle,
-        position: 'fixed',
-        left: pos.x,
-        top: pos.y,
-        width: 'min(1100px, calc(100vw - 48px))',
-        zIndex: 1000,
-      }}
-    >
+    <div ref={barRef} style={{ ...bodyStyle, flexShrink: 0 }}>
       {headerEl}
       {gridEl}
     </div>

@@ -23,7 +23,18 @@ from typing import Callable, List, Optional
 import cv2
 import numpy as np
 
-from .drawing import draw_bboxes, draw_skeleton_coco13, draw_skeleton_mp33
+from .drawing import (
+    DEFAULT_COLOR_BBOX,
+    DEFAULT_COLOR_POSE_BODY,
+    DEFAULT_COLOR_POSE_LEFT,
+    DEFAULT_COLOR_POSE_RIGHT,
+    _side_color_map_coco13,
+    _side_color_map_mp33,
+    draw_bboxes,
+    draw_skeleton_coco13,
+    draw_skeleton_mp33,
+    hex_to_bgr,
+)
 from .mediapipe import MediaPipePoseRunner
 from .rtmdet import BBox, RtmdetRunner
 from .rtmpose import RtmposeRunner
@@ -95,13 +106,21 @@ class ClipAnnotator:
         skel: bool = True,
         skel_backend: str = "rtmpose",  # "rtmpose" | "mediapipe"
         progress_cb: Optional[Callable[[str, int, int], None]] = None,
+        # Annotation colours — hex strings ("rrggbb" or "#rrggbb"). Falls
+        # back to DEFAULT_COLOR_* if omitted or unparseable. The renderer
+        # uses per-keypoint side colouring so the left arm is `pose_left`,
+        # right arm is `pose_right`, and the trunk is `pose_body`.
+        color_bbox: Optional[str] = None,
+        color_pose_left: Optional[str] = None,
+        color_pose_right: Optional[str] = None,
+        color_pose_body: Optional[str] = None,
     ) -> AnnotateResult:
         """Run bbox + skeleton overlay on one clip; write to clip_out.
 
         Args:
           clip_in:        source mp4
           clip_out:       destination mp4 (default: `<stem>_annotated.mp4`)
-          bbox:           run RTMDet per frame and draw green rectangles
+          bbox:           run RTMDet per frame and draw rectangles
           skel:           run pose estimation and draw skeleton
           skel_backend:   "rtmpose" → uses RtmposeRunner (COCO-13)
                           "mediapipe" → uses MediaPipePoseRunner (33-pt, full-frame)
@@ -112,6 +131,9 @@ class ClipAnnotator:
                           every 5 frames, and once more with the final count
                           before returning. The callback must not raise and
                           must not block — callers wrap it in try/except.
+          color_bbox:     "#rrggbb" hex string for the RTMDet rectangle.
+          color_pose_left/right/body: hex strings for the three skeleton
+                          sides (driven by the Settings panel in the GUI).
 
         Returns AnnotateResult with `frames_processed` and `output_path`.
         """
@@ -164,6 +186,25 @@ class ClipAnnotator:
             except Exception:  # noqa: BLE001
                 pass
 
+        # Resolve the four user-configurable colours. We accept either a
+        # hex string ("rrggbb" / "#rrggbb") or `None` (use the module
+        # default). Anything unparseable degrades gracefully — better
+        # to draw the wrong colour than to abort the whole job.
+        def _hex_or_default(val, default):
+            if not val:
+                return default
+            try:
+                return hex_to_bgr(val)
+            except (ValueError, TypeError):
+                return default
+
+        bbox_bgr = _hex_or_default(color_bbox, DEFAULT_COLOR_BBOX)
+        left_bgr = _hex_or_default(color_pose_left,  DEFAULT_COLOR_POSE_LEFT)
+        right_bgr = _hex_or_default(color_pose_right, DEFAULT_COLOR_POSE_RIGHT)
+        body_bgr  = _hex_or_default(color_pose_body,  DEFAULT_COLOR_POSE_BODY)
+        side_colors_mp33  = _side_color_map_mp33(left_bgr, right_bgr, body_bgr)
+        side_colors_coco  = _side_color_map_coco13(left_bgr, right_bgr, body_bgr)
+
         frames = 0
         issues: List[str] = []
         rtmdet = self._rtmdet
@@ -177,21 +218,27 @@ class ClipAnnotator:
                 bboxes: List[BBox] = []
                 if bbox:
                     bboxes = rtmdet.detect(canvas)
-                    draw_bboxes(canvas, bboxes)
+                    draw_bboxes(canvas, bboxes, color=bbox_bgr)
 
                 if skel:
                     ts_ms = int((frames / fps) * 1000.0)
                     if skel_backend == "mediapipe":
                         kps = pose_runner.pose(canvas, ts_ms)
                         if kps is not None and len(kps) >= 33:
-                            draw_skeleton_mp33(canvas, kps, _MP_33_SKELETON)
+                            draw_skeleton_mp33(
+                                canvas, kps, _MP_33_SKELETON,
+                                side_colors=side_colors_mp33,
+                            )
                     else:
                         # RTMPose: prefer using the top RTMDet bbox as ROI when
                         # bbox is also enabled — cheaper + more accurate.
                         roi_box = bboxes[0] if (bbox and bboxes) else None
                         kps = pose_runner.pose(canvas, roi_box)
                         if kps is not None and len(kps) >= 13:
-                            draw_skeleton_coco13(canvas, kps)
+                            draw_skeleton_coco13(
+                                canvas, kps,
+                                side_colors=side_colors_coco,
+                            )
 
                 writer.write(canvas)
                 frames += 1

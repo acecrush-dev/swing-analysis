@@ -1,4 +1,6 @@
 import type { ClipProcessingState } from '../api/types';
+import { useI18n } from '../i18n';
+import { Tooltip } from './Tooltip';
 
 interface Props {
   state: 'idle'|'queued'|'running'|'done'|'failed'|'cancelled';
@@ -15,15 +17,9 @@ interface Props {
   clipProcessing?: Record<number, ClipProcessingState>;
 }
 
-const STAGE_LABEL: Record<ClipProcessingState['stage'], string> = {
-  rtmdet: 'RTMDet 检测',
-  pose: '姿态骨架',
-  'rtmdet+pose': 'RTMDet+姿态',
-};
-
 /**
  * Progress strip. plan 003 adds two optional rows under the main one:
- *   1. Outer queue row   — `🎬 clips x/y 已完成` (done / discovered)
+ *   1. Outer queue row   — `🎬 clips x/y done` (done / discovered)
  *   2. Inner clip rows   — at most `max_workers=2` rows, one per clip
  *                          currently in `clip.annotate_clip`, with a
  *                          frame counter and 4px progress strip.
@@ -38,6 +34,7 @@ export function ProgressPanel({
   onStart, onCancel, disabled,
   clipBarsEnabled, clipsDone, clipsDiscovered, clipProcessing,
 }: Props) {
+  const { t } = useI18n();
   const pct = progress && progress.total > 0 ? (100 * progress.frames / progress.total) : 0;
   const eta = (() => {
     if (!progress?.eta_sec && progress?.eta_sec !== 0) return '--:--';
@@ -67,17 +64,25 @@ export function ProgressPanel({
           pre-plan-003 layout when no clip flags are on. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         {state === 'idle' || state === 'done' || state === 'failed' || state === 'cancelled' ? (
-          <button onClick={onStart} disabled={disabled} style={{
-            padding: '4px 12px', fontSize: 13,
-            background: 'var(--bg-elev)', color: 'var(--text)',
-            border: '1px solid var(--border)', borderRadius: 4, cursor: disabled ? 'not-allowed' : 'pointer',
-          }}>▶ 开始切分</button>
+          <Tooltip text={disabled ? t('progress.startDisabled') : t('progress.start')}>
+            <button onClick={onStart} disabled={disabled} style={{
+              padding: '4px 12px', fontSize: 13,
+              background: 'var(--bg-elev)', color: 'var(--text)',
+              border: '1px solid var(--border)', borderRadius: 4, cursor: disabled ? 'not-allowed' : 'pointer',
+            }}>{t('progress.start')}</button>
+          </Tooltip>
         ) : (
-          <button onClick={onCancel} style={{
-            padding: '4px 12px', fontSize: 13,
-            background: 'var(--bg-elev)', color: 'var(--text)',
-            border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer',
-          }}>⏹ 取消</button>
+          // Cancel button — distinct danger style so it's obviously
+          // clickable. The button has never been `disabled` during run
+          // state; this just makes it visually unmissable.
+          <Tooltip text={t('progress.cancelTip')}>
+            <button onClick={onCancel} style={{
+              padding: '4px 12px', fontSize: 13,
+              background: 'var(--danger-bg)', color: 'var(--danger)',
+              border: '1px solid var(--danger-border)', borderRadius: 4,
+              cursor: 'pointer', fontWeight: 'bold',
+            }}>{t('progress.cancel')}</button>
+          </Tooltip>
         )}
         <span
           style={{
@@ -89,15 +94,15 @@ export function ProgressPanel({
             fontWeight: 'bold',
           }}
         >
-          {stateLabel(state)}
+          {stateLabel(state, t)}
         </span>
         <span style={{ flex: 1, fontSize: 12, opacity: 0.85, display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, color: 'var(--text)' }}>
           <span style={{ flexShrink: 0 }}>
             {progress
-              ? `${progress.frames}/${progress.total} (${pct.toFixed(1)}%) · ${progress.fps.toFixed(1)} fps · ETA ${eta} · 在线 segments=${segCount}`
+              ? `${progress.frames}/${progress.total} (${pct.toFixed(1)}%) · ${progress.fps.toFixed(1)} fps · ETA ${eta} · ${t('progress.segments', { n: segCount })}`
               : state === 'done'
-                ? `已完成 · 共 ${segments} 段`
-                : '等待开始…'}
+                ? t('progress.doneFmt', { n: segments })
+                : t('progress.waiting')}
           </span>
           <span style={{ flex: 1, height: 4, background: 'var(--bg-elev)', borderRadius: 2, overflow: 'hidden', minWidth: 60 }}>
             <span style={{ display: 'block', width: `${pct}%`, height: '100%', background: 'var(--success)', transition: 'width 0.2s' }} />
@@ -112,8 +117,8 @@ export function ProgressPanel({
             <span style={{ flex: 1, fontSize: 12, display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, color: 'var(--text)' }}>
               <span style={{ flexShrink: 0 }}>
                 {discovered > 0
-                  ? `🎬 clips ${done}/${discovered} 已完成${innerEntries.length > 0 ? ` · 处理中 ${innerEntries.map((e) => '#' + e.seg_id).join(' ')}` : ''}`
-                  : '🎬 等待切出 clip…'}
+                  ? `${t('progress.queue', { done, discovered })}${innerEntries.length > 0 ? ` · ${t('progress.processingFmt', { ids: innerEntries.map((e) => '#' + e.seg_id).join(' ') })}` : ''}`
+                  : t('progress.waitingClip')}
               </span>
               <span style={{ flex: 1, height: 4, background: 'var(--bg-elev)', borderRadius: 2, overflow: 'hidden', minWidth: 60 }}>
                 <span style={{ display: 'block', width: `${queuePct}%`, height: '100%', background: 'var(--accent)', transition: 'width 0.2s' }} />
@@ -123,9 +128,12 @@ export function ProgressPanel({
 
           {/* Row 3..N — one row per clip currently annotating. */}
           {innerEntries.map((entry) => {
-            const labelText = `clip #${entry.seg_id} · ${STAGE_LABEL[entry.stage]} · ${
-              entry.total > 0 ? `${entry.frame}/${entry.total} 帧` : `已处理 ${entry.frame} 帧`
-            }${entry.total > 0 && entry.frame >= entry.total ? ' · 收尾中…' : ''}`;
+            const labelText = t('progress.annotating', {
+              id: entry.seg_id,
+              stage: t('progress.stage.' + entry.stage),
+              frame: entry.frame,
+              total: entry.total,
+            });
             const innerPct = entry.total > 0 ? (100 * entry.frame / entry.total) : 0;
             return (
               <div key={entry.seg_id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -166,6 +174,6 @@ function stateFg(s: Props['state']): string {
     cancelled: 'var(--state-cancelled-fg)',
   }[s];
 }
-function stateLabel(s: Props['state']): string {
-  return { idle: '空闲', queued: '排队中', running: '运行中', done: '完成', failed: '失败', cancelled: '已取消' }[s];
+function stateLabel(s: Props['state'], t: (k: string) => string): string {
+  return t('state.' + s);
 }

@@ -1,4 +1,6 @@
 import type { ClipInfo, Segment } from '../api/types';
+import { useI18n } from '../i18n';
+import { Tooltip } from './Tooltip';
 
 interface Props {
   clips: ClipInfo[];
@@ -9,6 +11,7 @@ interface Props {
 }
 
 export function ClipGrid({ clips, segments, activeClip, onSelectClip, thumbUrl }: Props) {
+  const { t } = useI18n();
   return (
     <div
       style={{
@@ -24,7 +27,7 @@ export function ClipGrid({ clips, segments, activeClip, onSelectClip, thumbUrl }
         const seg = segments.find((s) => s.seg_id === c.seg_id);
         const isActive = activeClip?.seg_id === c.seg_id;
         const borderColor = isActive ? 'var(--accent)' : 'transparent';
-        return (
+        const card = (
           <div
             key={c.seg_id}
             onClick={() => onSelectClip(c)}
@@ -41,7 +44,6 @@ export function ClipGrid({ clips, segments, activeClip, onSelectClip, thumbUrl }
               fontSize: 12,
               boxShadow: isActive ? '0 0 0 2px var(--accent)' : 'none',
             }}
-            title={seg ? `clip #${c.seg_id} · ${seg.start_timecode} → ${seg.end_timecode}` : `clip #${c.seg_id}`}
           >
             <div
               style={{
@@ -57,7 +59,7 @@ export function ClipGrid({ clips, segments, activeClip, onSelectClip, thumbUrl }
             >
               <img
                 src={thumbUrl(c.seg_id)}
-                alt={`clip ${c.seg_id} 首帧`}
+                alt={t('grid.thumbAlt', { id: c.seg_id })}
                 loading="lazy"
                 style={{ width: '100%', height: '100%', objectFit: 'cover' }}
               />
@@ -72,13 +74,17 @@ export function ClipGrid({ clips, segments, activeClip, onSelectClip, thumbUrl }
                   {seg.start_timecode} → {seg.end_timecode}
                 </div>
                 <div style={{ opacity: 0.7, marginTop: 4, fontSize: 11, lineHeight: 1.45 }}>
-                  击球 @ {seg.contact_timecode} · peak {seg.peak_velocity.toFixed(3)} · dur {seg.duration_sec.toFixed(2)}s
-                  {seg.over_long && <span style={{ color: 'var(--warn)', marginLeft: 6 }}>⚠ over_long</span>}
-                  {seg.merged_intervals > 1 && <span style={{ opacity: 0.7, marginLeft: 6 }}>(合并 {seg.merged_intervals} 段)</span>}
+                  {t('grid.contactPeak', {
+                    contact: seg.contact_timecode,
+                    peak: seg.peak_velocity.toFixed(3),
+                    dur: seg.duration_sec.toFixed(2),
+                  })}
+                  {seg.over_long && <span style={{ color: 'var(--warn)', marginLeft: 6 }}>{t('grid.overLong')}</span>}
+                  {seg.merged_intervals > 1 && <span style={{ opacity: 0.7, marginLeft: 6 }}>{t('grid.merged', { n: seg.merged_intervals })}</span>}
                 </div>
               </>
             ) : (
-              <div style={{ opacity: 0.6, marginTop: 4 }}>（无 segment 元数据）</div>
+              <div style={{ opacity: 0.6, marginTop: 4 }}>{t('grid.fallback')}</div>
             )}
             {!c.playable && (
               <div
@@ -89,7 +95,7 @@ export function ClipGrid({ clips, segments, activeClip, onSelectClip, thumbUrl }
                   fontSize: 10, fontWeight: 'bold',
                 }}
               >
-                ⚠ 原生格式
+                {t('grid.fmtWarn')}
               </div>
             )}
             {isActive && (
@@ -101,10 +107,18 @@ export function ClipGrid({ clips, segments, activeClip, onSelectClip, thumbUrl }
                   fontSize: 10, fontWeight: 'bold',
                 }}
               >
-                ▶ 正在播放
+                {t('grid.playing')}
               </div>
             )}
           </div>
+        );
+        const titleText = seg
+          ? t('grid.titleFmt', { id: c.seg_id, start: seg.start_timecode, end: seg.end_timecode })
+          : `clip #${c.seg_id}`;
+        return (
+          <Tooltip key={c.seg_id} text={titleText}>
+            {card}
+          </Tooltip>
         );
       })}
     </div>

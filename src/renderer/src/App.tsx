@@ -8,24 +8,38 @@ import { ResultsPanel } from './components/ResultsPanel';
 import { ClipsBar } from './components/ClipsBar';
 import { useTheme } from './hooks/theme';
 import { HelpPanel } from './components/HelpPanel';
-
-declare global {
-  interface Window {
-    api: {
-      pickVideo: () => Promise<string|null>;
-      getServiceInfo: () => Promise<string|null>;
-      getDroppedFilePath: (file: File) => string;
-      exportPackage: (jobId: string | null) => Promise<{ ok: boolean; path?: string; error?: string }>;
-      openExternal: (url: string) => Promise<boolean>;
-      showAbout: () => Promise<void>;
-      onMenuEvent: (channel: string, cb: () => void) => () => void;
-    };
-  }
-}
+import { SettingsPanel, loadColors } from './components/SettingsPanel';
+import { Tooltip } from './components/Tooltip';
+import { ToastHost, toast } from './components/Toast';
+import { usePanelSync } from './hooks/usePanelSync';
+import type { PanelStateSnapshot } from './api/panels';
+import { useI18n, toggleLocale, getLocale } from './i18n';
+import './api/electron-api';
 
 // Allowed video extensions (kept in sync with the dialog filter on the
 // main-process side). Anything dropped that doesn't match is rejected
 // with a friendly error instead of being shoved into the pipeline.
+
+// Unified header icon-button style — same width / height / padding so
+// the three controls in the top-right (help / locale / theme) line up
+// in a tidy row. Slightly bigger than the original 26×26 because the
+// EN/中 glyph needs a bit more room than a single emoji.
+const HEADER_BTN_SIZE = 32;
+const headerBtn: React.CSSProperties = {
+  background: 'var(--bg-elev)',
+  color: 'var(--text)',
+  border: '1px solid var(--border)',
+  borderRadius: 4,
+  width: HEADER_BTN_SIZE,
+  height: HEADER_BTN_SIZE,
+  padding: 0,
+  cursor: 'pointer',
+  fontSize: 14,
+  lineHeight: 1,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+};
 const VIDEO_EXTS = ['mp4', 'mov', 'm4v', 'avi', 'mkv', 'webm'] as const;
 function isVideoPath(p: string): boolean {
   const m = p.match(/\.([a-z0-9]+)$/i);
@@ -38,6 +52,14 @@ interface DropState { active: boolean; }
 
 export default function App() {
   const { theme, toggle } = useTheme();
+  const { t } = useI18n();
+  const [, forceI18n] = useState(0);
+  // Re-render App when locale flips so the locale badge stays current.
+  useEffect(() => {
+    const handler = () => forceI18n((n) => n + 1);
+    window.addEventListener('localechange', handler);
+    return () => window.removeEventListener('localechange', handler);
+  }, []);
   const [dropActive, setDropActive] = useState(false);
   const dropCounter = useRef(0);
   const [baseUrl, setBaseUrl] = useState<string | null>(null);
@@ -64,6 +86,11 @@ export default function App() {
   const [vizMode, setVizMode] = useState(false);
   // Help overlay (plan 002 M22)
   const [helpOpen, setHelpOpen] = useState(false);
+  // Settings overlay — owns the four annotation colours. Persisted to
+  // localStorage by SettingsPanel; here we just track the live values
+  // so we can bake them into the next job's params.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [colors, setColors] = useState(() => loadColors());
 
   // Per-artifact existence flags. Populated by HEAD probes after the
   // job reaches done. The right panel uses these to hide download links
@@ -73,6 +100,16 @@ export default function App() {
     viz: boolean;
     clips: boolean;
   }>({ segmentsJson: false, viz: false, clips: false });
+
+  // Sorted-clips view used for BOTH the ClipsBar render and the panel
+  // snapshot. Concurrent annotations can finish out of seg_id order
+  // (max_workers=2), and the WS `clip.generated` events arrive in
+  // completion order; rendering them in that order looks like the
+  // clips appear shuffled. Sort once, here, so both surfaces agree.
+  const sortedClips = useMemo(
+    () => clips.slice().sort((a, b) => a.seg_id - b.seg_id),
+    [clips],
+  );
 
   const pushLog = (line: string) => setLogLines((prev) => {
     const next = [...prev, line];
@@ -85,7 +122,7 @@ export default function App() {
         const url = await window.api.getServiceInfo();
         setBaseUrl(url);
       } catch (e: any) {
-        setError(`getServiceInfo failed: ${e}`);
+        setError(t('status.err.getServiceInfo', { err: String(e) }));
       }
     })();
   }, []);
@@ -103,7 +140,7 @@ export default function App() {
         if (p) {
           setError(null);
           setVideoPath(p);
-          pushLog(`📁 菜单打开文件: ${p}`);
+          pushLog(t('status.menuOpened', { path: p }));
         }
       })();
     });
@@ -113,10 +150,77 @@ export default function App() {
     const offAbout = window.api.onMenuEvent('menu:about', () => {
       window.api?.showAbout?.();
     });
-    return () => { offOpen(); offExport(); offAbout(); };
+    const offClearJob = window.api.onMenuEvent('menu:clear-job', () => {
+      deleteJob();
+    });
+    const offClearOutput = window.api.onMenuEvent('menu:clear-output', () => {
+      (async () => {
+        const r = await window.api?.clearOutputDir?.();
+        if (!r) return;
+        if (r.ok) {
+          pushLog(t('status.outputCleared', { path: r.path, n: r.deleted_count }));
+          // Local state — if the cleared dir included the active job,
+          // wipe the in-memory state so the UI doesn't keep showing
+          // ghosts of artifacts that are gone.
+          if (jobId && r.cleared_job_ids?.includes(jobId)) {
+            setJobId(null);
+            setSegments([]);
+            setSelectedSeg(null);
+            setClips([]);
+            setActiveClip(null);
+            setProgress(null);
+            setClipProc({});
+            setVizMode(false);
+            setJobState('idle');
+          }
+        } else if (r.error !== 'cancelled') {
+          setError(t('status.clearOutputFail', { err: r.error }));
+        }
+      })();
+    });
+    return () => { offOpen(); offExport(); offAbout(); offClearJob(); offClearOutput(); };
   }, []);
 
   const client = useMemo(() => baseUrl ? new SwingClient(baseUrl) : null, [baseUrl]);
+
+  // Plan 004 — push a debounced snapshot to detached panel windows and
+  // receive actions back from them (select-clip / clear-log / cleanup-
+  // clips / closed). `sortedClips` (above) is used here so the panel
+  // window also renders clips in pipeline order, not arrival order.
+  const snapshot: PanelStateSnapshot = useMemo(() => ({
+    theme,
+    baseUrl,
+    jobId,
+    videoPath,
+    jobState,
+    saveClipsEnabled: params.save_clips,
+    clips: sortedClips,
+    segments,
+    activeClip,
+    clipProc,
+    logLines,
+  }), [theme, baseUrl, jobId, videoPath, jobState, params.save_clips, sortedClips, segments, activeClip, clipProc, logLines]);
+
+  const detachClips = () => { window.api?.openPanel?.('clips'); };
+  const recallClips = () => { window.api?.closePanel?.('clips'); };
+  const detachLog = () => { window.api?.openPanel?.('log'); };
+  const recallLog = () => { window.api?.closePanel?.('log'); };
+
+  const { panelOpen } = usePanelSync(snapshot, (a) => {
+    if (!a || typeof a !== 'object') return;
+    if (a.type === 'select-clip') {
+      const segId = (a as { seg_id?: number }).seg_id;
+      if (typeof segId === 'number') {
+        const c = clips.find((x) => x.seg_id === segId);
+        if (c) handleSelectClip(c);
+      }
+    } else if (a.type === 'clear-log') {
+      setLogLines([]);
+    } else if (a.type === 'cleanup-clips') {
+      handleCleanupClips();
+    }
+    // 'closed' is handled inside usePanelSync itself (panelOpen flag).
+  });
 
   const startJob = async () => {
     if (!client || !videoPath) return;
@@ -131,10 +235,13 @@ export default function App() {
     setClipProc({});
     setJobState('queued');
     try {
-      const r = await client.createJob(videoPath, params);
+      // Bake the latest annotation colours into the job params. We read
+      // `colors` from state on every start, so any change in the
+      // Settings panel takes effect on the NEXT job without a restart.
+      const r = await client.createJob(videoPath, { ...params, ...colors });
       setJobId(r.job_id);
       setJobState('running');
-      pushLog(`▶ job ${r.job_id} 创建 · save_clips=${params.save_clips}`);
+      pushLog(t('status.jobStart', { id: r.job_id, flag: String(params.save_clips) }));
       const close = client.openEvents(
         r.job_id,
         (e: any) => {
@@ -154,17 +261,25 @@ export default function App() {
               const d = data;
               if (typeof d.fps === 'number' && typeof d.frames === 'number'
                   && (d.frames % 50 === 0 || d.frames === d.total)) {
-                pushLog(`  pose ${d.frames}/${d.total} · ${d.fps.toFixed(1)} fps · emit=${d.segments_emitted ?? 0}`);
+                pushLog(t('status.poseProgress', {
+                  frames: d.frames, total: d.total,
+                  fps: d.fps.toFixed(1), emit: d.segments_emitted ?? 0,
+                }));
               }
             }
             if (e.type === 'segment.emitted') {
               const seg = data.segment;
               if (!seg) return;
               setSegments((s) => [...s, seg]);
-              pushLog(`✂ segment #${seg.seg_id} ${seg.start_timecode ?? '?'} → ${seg.end_timecode ?? '?'} · 击球 @ ${seg.contact_timecode ?? '?'}`);
+              pushLog(t('status.segmentEmitted', {
+                id: seg.seg_id,
+                start: seg.start_timecode ?? '?',
+                end: seg.end_timecode ?? '?',
+                contact: seg.contact_timecode ?? '?',
+              }));
             }
             if (e.type === 'clip.annotated') {
-              pushLog(`🎯 clip #${data.seg_id} 标注完成`);
+              pushLog(t('status.clipAnnotated', { id: data.seg_id }));
             }
             if (e.type === 'clip.progress') {
               // plan 003 — per-clip annotation stage progress. Keyed by
@@ -199,7 +314,10 @@ export default function App() {
                   if (prev.some((c) => c.seg_id === info.seg_id)) return prev;
                   return [...prev, info];
                 });
-                pushLog(`🎬 clip #${info.seg_id} 生成${info.playable ? ' (H.264 ✓)' : ' (mp4v only)'}`);
+                pushLog(t('status.clipGenerated', {
+                  id: info.seg_id,
+                  h264: info.playable ? t('status.h264Yes') : t('status.h264No'),
+                }));
               }
               // plan 003 — clip is fully done (extracted + annotated +
               // H.264 attempted); drop its inner progress bar.
@@ -213,19 +331,22 @@ export default function App() {
             if (e.type === 'job.completed') {
               setJobState('done');
               setClipProc({});
-              pushLog(`✓ job 完成 · 共 ${data.segment_count ?? '?'} 段`);
+              pushLog(t('status.jobDone', { n: data.segment_count ?? '?' }));
+              toast.success(t('toast.jobDone', { n: data.segment_count ?? '?' }));
             }
             if (e.type === 'job.failed') {
               setJobState('failed');
               setClipProc({});
               const msg = String(data.error ?? 'unknown');
               setError(msg);
-              pushLog(`✗ job 失败: ${msg}`);
+              pushLog(t('status.jobFail', { err: msg }));
+              toast.error(t('toast.jobFail', { err: msg }));
             }
             if (e.type === 'job.cancelled') {
               setJobState('cancelled');
               setClipProc({});
-              pushLog(`⊘ job 取消`);
+              pushLog(t('status.jobCancel'));
+              toast.info(t('toast.jobCancel'));
             }
           } catch (err) {
             // eslint-disable-next-line no-console
@@ -242,7 +363,7 @@ export default function App() {
               // plan 003 — clipProc is a per-event live stream artifact;
               // on reconnect we clear and let fresh events rebuild it.
               setClipProc({});
-              pushLog(`↻ WS 重连 · state=${info.state} · ${(info.segments ?? []).length} 段`);
+              pushLog(t('status.wsReconnect', { state: info.state, n: (info.segments ?? []).length }));
             }).catch((err) => {
               // eslint-disable-next-line no-console
               console.error('[ws reconnect]', err);
@@ -257,7 +378,7 @@ export default function App() {
     } catch (e: any) {
       setError(String(e));
       setJobState('failed');
-      pushLog(`✗ 创建失败: ${String(e)}`);
+      pushLog(t('status.err.createFail', { err: String(e) }));
     }
   };
 
@@ -265,26 +386,30 @@ export default function App() {
     if (!client || !jobId) return;
     try {
       await client.cancel(jobId);
-      pushLog(`⊘  已发送取消请求`);
+      // Immediate visible feedback — the cancel is async (the pipeline
+      // stops at the next frame boundary), so without this the button
+      // can feel dead/unresponsive.
+      toast.info(t('toast.cancelSent'));
+      pushLog(t('status.cancelSent'));
     } catch (e: any) {
       setError(String(e));
-      pushLog(`✗ 取消失败: ${String(e)}`);
+      pushLog(t('status.cancelFail', { err: String(e) }));
     }
   };
 
   // Delete the entire job — wipes /api/data/jobs/{id} from disk.
   const deleteJob = async () => {
     if (!client || !jobId) return;
-    if (jobState === 'running') {
-      setError('运行中的 job 不能删除，请先取消');
+    if (jobState === 'running' || jobState === 'queued') {
+      toast.warning(t('toast.deleteBusy', { state: jobState }));
       return;
     }
-    if (!window.confirm(`删除整个 job？所有 clips 和 viz.mp4 都会从磁盘清空（backend/data/jobs/${jobId}/）。`)) return;
+    if (!window.confirm(t('status.confirmDeleteJob', { id: jobId }))) return;
     try {
       await client.delete(jobId);
       // Close the live WS if any
       (window as any).__closeWs?.();
-      pushLog(`🗑 job ${jobId} 已删除`);
+      pushLog(t('status.deleted', { id: jobId }));
       // Reset everything
       setJobId(null);
       setSegments([]);
@@ -297,7 +422,7 @@ export default function App() {
       setJobState('idle');
     } catch (e: any) {
       setError(String(e));
-      pushLog(`✗ 删除失败: ${String(e)}`);
+      pushLog(t('status.deleteFail', { err: String(e) }));
     }
   };
 
@@ -306,7 +431,7 @@ export default function App() {
     if (jobState !== 'done') return;
     client.listClips(jobId)
       .then((cs) => setClips(Array.isArray(cs) ? cs : []))
-      .catch((e) => setError(`listClips: ${e}`));
+      .catch((e) => setError(t('status.err.listClips', { err: String(e) })));
   }, [client, jobId, jobState]);
 
   // HEAD-probe each artifact once the job is done. Cancelling resets
@@ -368,15 +493,22 @@ export default function App() {
 
   const handleCleanupClips = async () => {
     if (!client || !jobId) return;
-    if (!window.confirm('删除该 job 的全部 clips？')) return;
+    if (jobState === 'running' || jobState === 'queued') {
+      toast.warning(t('toast.cleanupBusy', { state: jobState }));
+      return;
+    }
+    if (!window.confirm(t('status.confirmCleanup'))) return;
     try {
       const res = await client.cleanupClips(jobId);
       setClips([]);
       setActiveClip(null);
-      pushLog(`🧹 已清理 ${res.deleted_count} 个 clips 文件 (${(res.freed_bytes/1024).toFixed(1)} KB)`);
+      pushLog(t('status.cleanupDone', {
+        n: res.deleted_count,
+        kb: (res.freed_bytes / 1024).toFixed(1),
+      }));
     } catch (e: any) {
       setError(String(e));
-      pushLog(`✗ 清理失败: ${String(e)}`);
+      pushLog(t('status.cleanupFail', { err: String(e) }));
     }
   };
 
@@ -387,23 +519,27 @@ export default function App() {
   // the job directory.
   const handleExportPackage = async () => {
     if (!jobId) {
-      setError('没有可导出的 job');
+      setError(t('status.noExport'));
+      return;
+    }
+    if (jobState === 'running' || jobState === 'queued') {
+      toast.warning(t('toast.exportBusy', { state: jobState }));
       return;
     }
     if (!window.api?.exportPackage) {
-      setError('当前环境不支持导出（preload 没暴露 exportPackage）');
+      setError(t('status.noExportApi'));
       return;
     }
     try {
       const res = await window.api.exportPackage(jobId);
       if (res.ok) {
-        pushLog(`📦 已导出 job 包: ${res.path}`);
+        pushLog(t('status.opened', { path: String(res.path ?? '') }));
         setError(null);
       } else {
-        if (res.error !== 'cancelled') setError(`导出失败: ${res.error}`);
+        if (res.error !== 'cancelled') setError(t('status.exportFail', { err: String(res.error ?? '') }));
       }
     } catch (e: any) {
-      setError(`导出失败: ${e}`);
+      setError(t('status.exportFail', { err: String(e) }));
     }
   };
 
@@ -417,17 +553,17 @@ export default function App() {
       p = '';
     }
     if (!p) {
-      setError('无法获取拖入文件的绝对路径 —— 请改用「选择视频…」按钮');
+      setError(t('status.noDropPath'));
       return;
     }
     if (!isVideoPath(p)) {
       const ext = (p.match(/\.([a-z0-9]+)$/i)?.[1] ?? '?').toLowerCase();
-      setError(`不是视频文件（.${ext})。请拖入 ${VIDEO_EXTS.map((e) => '.' + e).join(' / ')} 格式的视频。`);
+      setError(t('status.badExt', { ext, list: VIDEO_EXTS.map((e) => '.' + e).join(' / ') }));
       return;
     }
     setError(null);
     setVideoPath(p);
-    pushLog(`📂 拖入视频: ${p}`);
+    pushLog(t('status.dropped', { path: p }));
   };
 
   // Drag events on the outer grid. We use a counter to ignore dragleave
@@ -454,17 +590,17 @@ export default function App() {
     setDropActive(false);
     const files = Array.from(e.dataTransfer.files ?? []);
     if (files.length === 0) {
-      setError('没有收到文件');
+      setError(t('status.noFile'));
       return;
     }
     if (files.length > 1) {
-      setError('一次只能拖一个视频文件');
+      setError(t('status.multiDrop'));
       return;
     }
     handleDroppedFile(files[0]);
   };
 
-  if (!baseUrl) return <div style={{ padding: 24 }}>⏳ 等待 sidecar 服务启动…</div>;
+  if (!baseUrl) return <div style={{ padding: 24 }}>{t('status.waitSidecar')}</div>;
 
   const clipSegment = activeClip
     ? segments.find((s) => s.seg_id === activeClip.seg_id) ?? null
@@ -524,7 +660,7 @@ export default function App() {
             fontWeight: 'bold',
           }}
         >
-          拖入视频文件即可载入
+          {t('app.dropHint')}
         </div>
       )}
       {/* Left column — title → video → progress → clips (pinned) */}
@@ -538,40 +674,40 @@ export default function App() {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <h2 style={{ margin: 0 }}>🎾 swing-analysis</h2>
+          <h2 style={{ margin: 0 }}>{t('app.title')}</h2>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <button
-              onClick={() => setHelpOpen(true)}
-              title="帮助 / 参数说明"
-              style={{
-                background: 'var(--bg-elev)',
-                color: 'var(--text)',
-                border: '1px solid var(--border)',
-                borderRadius: '50%',
-                width: 26, height: 26,
-                cursor: 'pointer',
-                fontSize: 14, fontWeight: 'bold',
-                lineHeight: 1, padding: 0,
-              }}
-            >
-              ?
-            </button>
-            <button
-              onClick={toggle}
-              title={theme === 'dark' ? '当前：深色模式（点击切换到浅色）' : '当前：浅色模式（点击切换到深色）'}
-              style={{
-                background: 'var(--bg-elev)',
-                color: 'var(--text)',
-                border: '1px solid var(--border)',
-                borderRadius: 4,
-                padding: '4px 10px',
-                cursor: 'pointer',
-                fontSize: 16,
-                lineHeight: 1,
-              }}
-            >
-              {theme === 'dark' ? '🌙' : '☀️'}
-            </button>
+            <Tooltip text={t('app.help')}>
+              <button
+                onClick={() => setHelpOpen(true)}
+                style={headerBtn}
+              >
+                ?
+              </button>
+            </Tooltip>
+            <Tooltip text={t('app.settings')}>
+              <button
+                onClick={() => setSettingsOpen(true)}
+                style={headerBtn}
+              >
+                ⚙
+              </button>
+            </Tooltip>
+            <Tooltip text={t('app.locale.switch')}>
+              <button
+                onClick={() => toggleLocale()}
+                style={headerBtn}
+              >
+                {getLocale() === 'zh' ? '中' : 'EN'}
+              </button>
+            </Tooltip>
+            <Tooltip text={theme === 'dark' ? t('app.theme.toDark') : t('app.theme.toLight')}>
+              <button
+                onClick={toggle}
+                style={headerBtn}
+              >
+                {theme === 'dark' ? '🌙' : '☀️'}
+              </button>
+            </Tooltip>
           </div>
         </div>
         <div style={{
@@ -614,7 +750,7 @@ export default function App() {
           clipProcessing={clipProc}
         />
         <ClipsBar
-          clips={clips}
+          clips={sortedClips}
           segments={segments}
           activeClip={activeClip}
           onSelectClip={handleSelectClip}
@@ -623,6 +759,9 @@ export default function App() {
           jobDone={jobState === 'done' || jobState === 'failed' || jobState === 'cancelled'}
           saveClipsEnabled={params.save_clips}
           jobRunning={jobState === 'running' || jobState === 'queued'}
+          detached={panelOpen.clips}
+          onDetach={detachClips}
+          onRecall={recallClips}
         />
       </div>
 
@@ -649,11 +788,25 @@ export default function App() {
           vizAvailable={artifacts.viz}
           segmentsJsonAvailable={artifacts.segmentsJson}
           clipsAvailable={artifacts.clips}
+          logDetached={panelOpen.log}
+          onDetachLog={detachLog}
+          onRecallLog={recallLog}
         />
       </div>
 
+      {/* Toast host — fixed-position notifications under the title row. */}
+      <ToastHost />
+
       {/* Help overlay — sits above everything */}
       {helpOpen && <HelpPanel onClose={() => setHelpOpen(false)} />}
+
+      {/* Settings overlay — annotation colours */}
+      {settingsOpen && (
+        <SettingsPanel
+          onClose={() => setSettingsOpen(false)}
+          onChange={(c) => setColors(c)}
+        />
+      )}
     </div>
   );
 }

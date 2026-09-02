@@ -49,6 +49,7 @@ Python 后端,UI 层完全可插拔。算法核 **vendored byte-for-byte** 落�
 - **🎬 原生视频 seek** —— GUI 用 HTTP Range 播**原始视频**,绕开 cv2 `mp4v` 编码 Chromium 解不出来的坑
 - **🎞 Clip 内嵌播放 (plan 002)** —— 每段 clip 自动转一份 H.264 预览 (`clip_NNN_h264.mp4`),GUI 直接内嵌;mp4v 原件仍作 canonical 下载产物。无 ffmpeg 时 GUI 自动降级为「跳转到原视频对应 start_timecode」。
 - **📊 Clip 双进度条 (plan 003)** —— 勾选「clip 叠加 RTMDet 人物框」或「clip 叠加骨架」后,GUI 的进度区扩成两行:外层是 clip 队列进度(已完成 / 已发现),内层是当前每个正在标注的 clip 的 RTMDet / 姿态 / 两者组合逐帧进度,每 5 帧刷一次。两个 flag 全关时单行进度区与改动前完全一致(零回归)。
+- **↗ F12 式分离面板 (plan 004)** —— clips 列表与事件日志可弹成独立 OS 窗口(类似 Chrome DevTools 的 Undock into separate window),可拖出主程序边框、独立缩放,主窗口 ↔ 分离窗口双向状态实时同步(分离窗口里点 clip 主窗口立即播放);面板位置/尺寸跨重启记忆;原有 `📌 悬浮` 窗口内浮动模式不变。
 - **🧩 模块纯粹,按 pipeline 组合** —— 切分 / 检测 / 姿态是互相独立的函数;可同跑,也可分段跑同一组 clips
 
 ## 快速开始

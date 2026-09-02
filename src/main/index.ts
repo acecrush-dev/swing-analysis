@@ -1,7 +1,19 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, Menu, MenuItemConstructorOptions } from 'electron';
-import { join } from 'node:path';
+import { join, resolve as resolvePath } from 'node:path';
 import { spawn, ChildProcessWithoutNullStreams } from 'node:child_process';
-import { existsSync, readdirSync, statSync, createWriteStream } from 'node:fs';
+import { existsSync, readdirSync, statSync, createWriteStream, mkdirSync, rmSync } from 'node:fs';
+import {
+  openPanel,
+  closePanel,
+  closeAllPanels,
+  isPanelOpen,
+  panelOpenState,
+  broadcastPanelState,
+  getPanelCachedState,
+  forwardPanelAction,
+  setPanelActionSink,
+  type PanelKind,
+} from './panels';
 // archiver ships with its own JS; no bundled types so we require it
 // dynamically and treat as any.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -101,6 +113,20 @@ async function createWindow() {
     }
   });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // Plan 004 — pipe panel-window action requests back into the main
+  // window. select-clip additionally yanks focus back to main so the
+  // user sees the playback switch immediately.
+  setPanelActionSink((a) => {
+    if (!win.isDestroyed()) win.webContents.send('panel:action', a);
+    if (a && a.type === 'select-clip') {
+      if (!win.isDestroyed()) {
+        if (win.isMinimized()) win.restore();
+        win.show();
+        win.focus();
+      }
+    }
+  });
+  win.on('closed', () => closeAllPanels());
   if (process.env.ELECTRON_RENDERER_URL) {
     await win.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
@@ -114,9 +140,42 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => sidecar.kill());
+app.on('before-quit', () => { sidecar.kill(); closeAllPanels(); });
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
+});
+
+// Resolve the data dir from the sidecar CLI flags so IPC handlers can
+// reconstruct per-job out_dir paths without round-tripping to the
+// Python service. Matches backend/service/jobs.py: jobs_root =
+// data_dir / "jobs" / job_id.
+function resolveDataDir(): string {
+  // Sidecar is spawned with --data-dir relative to repoRoot; mirror that
+  // resolution so we can hit the same on-disk layout from the main
+  // process.
+  const repoRoot = join(__dirname, '..', '..');
+  return join(repoRoot, 'backend', 'data');
+}
+const DATA_DIR = resolveDataDir();
+
+// Open the job's output directory in the OS file manager. Renderer
+// supplies the job_id (UUID12 like "abc123de45f6"); we look it up under
+// DATA_DIR/jobs/<id> and shell.openPath it. The path may not exist yet
+// (cold start, cancelled before extraction) — in that case we create it
+// so the user sees an empty folder rather than nothing.
+ipcMain.handle('open-output-dir', async (_evt, jobId: string) => {
+  if (typeof jobId !== 'string' || !/^[a-zA-Z0-9_-]{4,64}$/.test(jobId)) {
+    return { ok: false, error: 'invalid jobId' };
+  }
+  const dir = join(DATA_DIR, 'jobs', jobId);
+  try {
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const err = await shell.openPath(resolvePath(dir));
+    if (err) return { ok: false, error: err };
+    return { ok: true, path: dir };
+  } catch (e: any) {
+    return { ok: false, error: String(e) };
+  }
 });
 
 ipcMain.handle('pick-video', async () => {
@@ -130,6 +189,36 @@ ipcMain.handle('pick-video', async () => {
 });
 
 ipcMain.handle('get-service-info', () => sidecar.baseUrl());
+
+// ── Plan 004: F12-style detachable panels ─────────────────────────
+// Each panel window is its own BrowserWindow (per-kind single-instance)
+// that the renderer opens via panel:open and tears down via panel:close.
+// State flows one-way (renderer → main → panel via panel:state) and
+// actions flow the opposite direction (panel:action → main window).
+ipcMain.handle('panel:open', (_evt, kind: PanelKind) => {
+  if (kind !== 'clips' && kind !== 'log') return { ok: false, error: 'bad kind' };
+  const parent = BrowserWindow.fromWebContents(_evt.sender);
+  if (!parent) return { ok: false, error: 'no parent window' };
+  return openPanel(kind, parent);
+});
+
+ipcMain.handle('panel:close', (_evt, kind: PanelKind) => {
+  if (kind !== 'clips' && kind !== 'log') return { ok: false, error: 'bad kind' };
+  closePanel(kind);
+  return { ok: true };
+});
+
+ipcMain.handle('panel:is-open', () => panelOpenState());
+
+ipcMain.handle('panel:get-state', () => getPanelCachedState());
+
+ipcMain.on('panel:push-state', (_evt, snap: unknown) => {
+  broadcastPanelState(snap);
+});
+
+ipcMain.on('panel:action-request', (_evt, action: unknown) => {
+  forwardPanelAction(action);
+});
 
 // Pack the current job's output dir (segments.json + clips + viz.mp4)
 // into a single zip the user can hand off. Done in the main process so
@@ -194,6 +283,23 @@ ipcMain.handle('show-about', () => {
   });
 });
 
+// Wipe the entire backend/data/jobs/ tree (i.e. the "output dir").
+// Used by the System → Clear Output Dir… menu item. Returns the
+// deleted job IDs so the renderer can clear matching in-memory state.
+ipcMain.handle('clear-output-dir', async () => {
+  const dir = join(DATA_DIR, 'jobs');
+  if (!existsSync(dir)) return { ok: true, path: dir, deleted_count: 0, cleared_job_ids: [] };
+  try {
+    const before = readdirSync(dir);
+    const ids = before.filter((n) => /^[a-zA-Z0-9_-]{4,64}$/.test(n));
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(dir, { recursive: true });
+    return { ok: true, path: dir, deleted_count: ids.length, cleared_job_ids: ids };
+  } catch (e: any) {
+    return { ok: false, error: String(e) };
+  }
+});
+
 // Build the application menu. Exactly two top-level menus — System
 // (Open File / Export Package / Exit) and Help (docs link / About).
 // Per the user's M24 spec: no Edit, no View, no Window.
@@ -236,6 +342,9 @@ function buildMenu() {
     submenu: [
       { label: 'Open File…', accelerator: 'CmdOrCtrl+O', click: send('menu:open-file') },
       { label: 'Export Package…', accelerator: 'CmdOrCtrl+E', click: send('menu:export-package') },
+      { type: 'separator' as const },
+      { label: 'Clear Current Job Dir', click: send('menu:clear-job') },
+      { label: 'Clear Output Dir…', click: send('menu:clear-output') },
       { type: 'separator' as const },
       { role: 'quit' as const },
     ],

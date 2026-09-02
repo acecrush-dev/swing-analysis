@@ -18,14 +18,25 @@ export interface JobParams {
   clip_bbox: boolean;
   clip_skel: boolean;
   skel_backend: 'rtmpose' | 'mediapipe';
+  // Annotation colours — 6-hex-digit strings (without leading '#').
+  // Mirror the backend's JobParams.color_*; defaults match the GUI
+  // Settings panel defaults (pink bbox, red/yellow/green pose sides).
+  color_bbox: string;
+  color_pose_left: string;
+  color_pose_right: string;
+  color_pose_body: string;
 }
 
 export const DEFAULT_PARAMS: JobParams = {
   v_swing: 0.10, gap_merge: 1.5, max_bridge: 1.5, min_peak: 0.30,
   smooth_alpha: 0.65, max_lost_frames: 8, min_dur: 0.3, max_dur: 6.0,
   buf_before: 1.0, buf_after: 1.0, skip: 1, max_frames: 0,
-  save_clips: true, viz_video: false,
+  save_clips: true, viz_video: true,
   clip_bbox: false, clip_skel: false, skel_backend: 'rtmpose',
+  color_bbox: 'ff69b4',
+  color_pose_left: 'ff0000',
+  color_pose_right: 'ffff00',
+  color_pose_body: '00ff00',
 };
 
 export interface SegmentPhase {

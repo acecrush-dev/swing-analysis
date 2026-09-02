@@ -60,11 +60,17 @@ DEFAULT_PARAMS: Dict = {
     "skip": 1,
     "max_frames": 0,
     "save_clips": False,
-    "viz_video": False,
+    "viz_video": True,
     # clip annotation (optional, applied after extraction per clip)
     "clip_bbox": False,        # RTMDet bbox overlay
     "clip_skel": False,        # pose skeleton overlay
     "skel_backend": "rtmpose", # "rtmpose" | "mediapipe"
+    # Annotation colour defaults — match the GUI Settings panel
+    # defaults: pink bbox, red/yellow/green pose sides.
+    "color_bbox":        "ff69b4",  # hot pink
+    "color_pose_left":   "ff0000",  # red
+    "color_pose_right":  "ffff00",  # yellow
+    "color_pose_body":   "00ff00",  # green
 }
 
 
@@ -206,6 +212,10 @@ def run_pipeline(
                             on_clip_annotated,
                             on_clip_extracted,
                             on_clip_progress,
+                            p.get("color_bbox"),
+                            p.get("color_pose_left"),
+                            p.get("color_pose_right"),
+                            p.get("color_pose_body"),
                         )
 
                 if progress_cb is not None:
@@ -245,6 +255,10 @@ def run_pipeline(
                         on_clip_annotated,
                         on_clip_extracted,
                         on_clip_progress,
+                        p.get("color_bbox"),
+                        p.get("color_pose_left"),
+                        p.get("color_pose_right"),
+                        p.get("color_pose_body"),
                     )
         finally:
             # Shutdown the executor LAST (and only once). It MUST be after
@@ -377,6 +391,10 @@ def _extract_and_maybe_annotate(
     on_clip_annotated: Optional[ClipAnnotatedCb] = None,
     on_clip_extracted: Optional[ClipExtractedCb] = None,
     on_clip_progress: Optional[ClipProgressCb] = None,
+    color_bbox: Optional[str] = None,
+    color_pose_left: Optional[str] = None,
+    color_pose_right: Optional[str] = None,
+    color_pose_body: Optional[str] = None,
 ) -> None:
     """Background task: extract one clip, then optionally annotate it.
 
@@ -418,6 +436,10 @@ def _extract_and_maybe_annotate(
                 skel=skel,
                 skel_backend=skel_backend,
                 progress_cb=_ann_progress,
+                color_bbox=color_bbox,
+                color_pose_left=color_pose_left,
+                color_pose_right=color_pose_right,
+                color_pose_body=color_pose_body,
             )
             if on_clip_annotated is not None:
                 on_clip_annotated({
@@ -434,11 +456,17 @@ def _extract_and_maybe_annotate(
             print(f"  ✗ clip {seg.seg_id:03d} annotate failed: {exc!r}", flush=True)
 
     # H.264 preview for Chromium <video> (plan 002). mp4v original is kept
-    # as the canonical download artifact. Failure is non-fatal: the clip
-    # stays mp4v-only and the GUI falls back to original-video seek.
+    # as the canonical download artifact. plan 003 follow-up: when
+    # annotation succeeded the in-GUI preview should mirror the overlay
+    # — so transcode the annotated file when present, falling back to
+    # the raw mp4v when no annotation flags were on (or annotate errored).
+    # Failure is non-fatal: the clip stays mp4v-only and the GUI falls
+    # back to original-video seek.
     h264_path = clips_dir / f"clip_{seg.seg_id:03d}_h264.mp4"
+    annotated_mp4 = clips_dir / f"clip_{seg.seg_id:03d}_annotated.mp4"
+    h264_src = annotated_mp4 if annotated_mp4.exists() else clip_mp4
     try:
-        transcode_to_h264(clip_mp4, h264_path)
+        transcode_to_h264(h264_src, h264_path)
     except Exception as exc:  # noqa: BLE001
         print(f"  ✗ clip {seg.seg_id:03d} h264 transcode failed: {exc!r}", flush=True)
 
