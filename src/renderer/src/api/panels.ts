@@ -16,6 +16,7 @@ import type {
   JobParams,
   Segment,
 } from './types';
+import type { BusyState } from '../busy';
 
 export type PanelKind = 'clips' | 'log';
 
@@ -41,6 +42,12 @@ export interface PanelStateSnapshot {
   // Reserved for future panels; keeping it here so we don't have to
   // rev the IPC shape the moment we want to add, say, a settings panel.
   params?: JobParams;
+  // Plan 005 — null/undefined means "main window is idle, panel is
+  // interactive"; non-null means "main window is running a long op,
+  // panel should dim + intercept clicks". undefined (vs null) is
+  // tolerated for older renderer builds that push a snapshot without
+  // this field.
+  busy?: BusyState | null;
 }
 
 /**

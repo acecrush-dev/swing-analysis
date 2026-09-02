@@ -299,6 +299,18 @@ const en: Record<string, string> = {
   'settings.color_pose_right.desc': 'Right hand · arm · upper/lower leg · foot',
   'settings.color_pose_body': 'Pose — body (trunk)',
   'settings.color_pose_body.desc': 'Nose / eyes / shoulders / hips etc.',
+
+  // Plan 005 — busy modal
+  'busy.title.export-package': 'Exporting job package…',
+  'busy.title.clear-output-dir': 'Clearing output directory…',
+  'busy.title.cleanup-clips': 'Cleaning up clips…',
+  'busy.title.open-output-dir': 'Opening output directory…',
+  'busy.status.start': 'Preparing…',
+  'busy.cancelling': 'Cancelling…',
+  'busy.fail': 'Failed: {err}',
+  'busy.cancel': 'Cancel',
+  'busy.logoAlt': 'logo',
+  'busy.frozen': 'Main window is busy — see the modal there.',
 };
 
 const zh: Record<string, string> = {
@@ -564,6 +576,18 @@ const zh: Record<string, string> = {
   'settings.color_pose_right.desc': '右手 · 手臂 · 大小腿 · 脚',
   'settings.color_pose_body': '姿态 — 躯干',
   'settings.color_pose_body.desc': '鼻 / 眼 / 肩 / 髋 等',
+
+  // Plan 005 — busy modal
+  'busy.title.export-package': '正在导出 job 包…',
+  'busy.title.clear-output-dir': '正在清空输出目录…',
+  'busy.title.cleanup-clips': '正在清理 clips…',
+  'busy.title.open-output-dir': '正在打开输出目录…',
+  'busy.status.start': '准备中…',
+  'busy.cancelling': '正在取消…',
+  'busy.fail': '失败：{err}',
+  'busy.cancel': '取消',
+  'busy.logoAlt': 'logo',
+  'busy.frozen': '主窗口正在执行长操作 — 请回主窗口查看。',
 };
 
 const DICTS: Record<Locale, Record<string, string>> = { en, zh };

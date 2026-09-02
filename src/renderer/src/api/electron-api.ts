@@ -18,9 +18,9 @@ declare global {
       pickVideo: () => Promise<string | null>;
       getServiceInfo: () => Promise<string | null>;
       getDroppedFilePath: (file: File) => string;
-      exportPackage: (jobId: string | null) => Promise<{ ok: boolean; path?: string; error?: string }>;
+      exportPackage: (jobId: string | null, callId: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
       openExternal: (url: string) => Promise<boolean>;
-      openOutputDir: (jobId: string) => Promise<{ ok: true; path: string } | { ok: false; error: string }>;
+      openOutputDir: (jobId: string, callId: string) => Promise<{ ok: true; path: string } | { ok: false; error: string }>;
       showAbout: () => Promise<void>;
       onMenuEvent: (channel: string, cb: () => void) => () => void;
 
@@ -35,10 +35,17 @@ declare global {
       onPanelAction: (cb: (a: PanelAction) => void) => () => void;
 
       // ── menu: clear output dir ────────────────────────────────
-      clearOutputDir: () => Promise<
+      clearOutputDir: (callId: string) => Promise<
         { ok: true; path: string; deleted_count: number; cleared_job_ids: string[] }
         | { ok: false; error: string }
       >;
+
+      // ── plan 005: long-op cancel + icon data url ───────────────
+      cleanupClips: (jobId: string, callId: string) => Promise<
+        { ok: true } | { ok: false; error: string }
+      >;
+      cancelCall: (callId: string) => void;
+      getIconDataUrl: () => Promise<string | null>;
 
       // ── settings: jobs output dir ─────────────────────────────
       getSettings: () => Promise<{

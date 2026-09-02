@@ -40,6 +40,9 @@ export function LogPanelApp() {
   const { logLines } = snap;
   const empty = logLines.length === 0;
 
+  // Plan 005 — panel freeze when main window is busy.
+  const isBusy = !!snap?.busy;
+
   return (
     <div
       style={{
@@ -53,6 +56,25 @@ export function LogPanelApp() {
         boxSizing: 'border-box',
       }}
     >
+      {isBusy && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'var(--scrim)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'var(--text)',
+            fontSize: 14,
+            fontWeight: 'bold',
+            zIndex: 5000,
+            pointerEvents: 'auto',
+          }}
+        >
+          {t('busy.frozen')}
+        </div>
+      )}
       <div
         style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',

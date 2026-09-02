@@ -12,9 +12,12 @@ import { HelpPanel } from './components/HelpPanel';
 import { SettingsPanel, loadColors } from './components/SettingsPanel';
 import { Tooltip } from './components/Tooltip';
 import { ToastHost, toast } from './components/Toast';
+import { BusyModal } from './components/BusyModal';
 import { usePanelSync } from './hooks/usePanelSync';
 import type { PanelStateSnapshot } from './api/panels';
 import { useI18n, toggleLocale, getLocale } from './i18n';
+import * as busy from './busy';
+import type { BusyState } from './busy';
 import './api/electron-api';
 
 // Allowed video extensions (kept in sync with the dialog filter on the
@@ -93,6 +96,39 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [colors, setColors] = useState(() => loadColors());
 
+  // Plan 005 — busy modal state. null = no modal; otherwise a BusyState
+  // describes the kind/title/callId of the in-flight long op.
+  const [busyState, setBusyState] = useState<BusyState | null>(null);
+  const [iconUrl, setIconUrl] = useState<string | null>(null);
+
+  // Wire the imperative busy.startBusy() API into React state.
+  useEffect(() => { busy.setBusyCallback(setBusyState); }, []);
+
+  // Fetch the app-icon data URL once on mount; the BusyModal uses it
+  // as the logo in its centred card.
+  useEffect(() => {
+    let cancelled = false;
+    window.api?.getIconDataUrl?.()
+      ?.then((u) => { if (!cancelled) setIconUrl(u); })
+      ?.catch(() => { /* fallback emoji */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Swallow ESC while the modal is open — the user must explicitly
+  // click 取消 to abort the IPC. Default ESC handler in the renderer
+  // closes HelpPanel/SettingsPanel; we add our own handler above that
+  // so the modal swallows the key when busy.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && busyState) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [busyState]);
+
   // Per-artifact existence flags. Populated by HEAD probes after the
   // job reaches done. The right panel uses these to hide download links
   // and the viz-play button that would 404 anyway.
@@ -163,8 +199,9 @@ export default function App() {
     });
     const offClearOutput = window.api.onMenuEvent('menu:clear-output', () => {
       (async () => {
-        const r = await window.api?.clearOutputDir?.();
-        if (!r) return;
+        if (!window.api?.clearOutputDir) return;
+        const handle = busy.startBusy('clear-output-dir', t('busy.title.clear-output-dir'));
+        const r = await window.api.clearOutputDir(handle.callId);
         if (r.ok) {
           pushLog(t('status.outputCleared', { path: r.path, n: r.deleted_count }));
           // Always reset the React side after a successful wipe — the
@@ -175,8 +212,12 @@ export default function App() {
           // mirrors what the user expects: "clean output → fresh start".
           (window as any).__closeWs?.();
           resetJobState();
-        } else if (r.error !== 'cancelled') {
+          handle.finish(true);
+        } else if (r.error === 'cancelled') {
+          handle.finish(false);
+        } else {
           setError(t('status.clearOutputFail', { err: r.error }));
+          handle.finish(false, t('busy.fail', { err: r.error }));
         }
       })();
     });
@@ -189,6 +230,9 @@ export default function App() {
   // receive actions back from them (select-clip / clear-log / cleanup-
   // clips / closed). `sortedClips` (above) is used here so the panel
   // window also renders clips in pipeline order, not arrival order.
+  //
+  // Plan 005 — also carries `busy` so detached panel windows can dim
+  // + pointer-events:none while the main window is running a long op.
   const snapshot: PanelStateSnapshot = useMemo(() => ({
     theme,
     baseUrl,
@@ -201,7 +245,8 @@ export default function App() {
     activeClip,
     clipProc,
     logLines,
-  }), [theme, baseUrl, jobId, videoPath, jobState, params.save_clips, sortedClips, segments, activeClip, clipProc, logLines]);
+    busy: busyState,
+  }), [theme, baseUrl, jobId, videoPath, jobState, params.save_clips, sortedClips, segments, activeClip, clipProc, logLines, busyState]);
 
   const detachClips = () => { window.api?.openPanel?.('clips'); };
   const recallClips = () => { window.api?.closePanel?.('clips'); };
@@ -522,6 +567,11 @@ export default function App() {
   // mean "everything gone, UI refreshed". This now mirrors `deleteJob`
   // — we keep the entry points separate because the ClipsBar is the
   // natural place to click it (next to the clips it cleans up).
+  //
+  // Plan 005 — now goes through the new `cleanupClips` IPC instead of
+  // calling `client.delete` directly. The IPC accepts a callId-cancel
+  // so the user can 取消 mid-wipe; the main process forwards the
+  // abort signal to the sidecar fetch.
   const handleCleanupClips = async () => {
     if (!client || !jobId) return;
     if (jobState === 'running' || jobState === 'queued') {
@@ -529,14 +579,32 @@ export default function App() {
       return;
     }
     if (!window.confirm(t('status.confirmCleanup'))) return;
-    try {
-      await client.delete(jobId);
+    if (!window.api?.cleanupClips) {
+      // Preload missing this method — fall back to the legacy direct
+      // delete so old builds still work (will show no modal).
+      try {
+        await client.delete(jobId);
+        (window as any).__closeWs?.();
+        pushLog(t('status.cleanupDone', { n: 0, kb: '0.0' }));
+        resetJobState();
+      } catch (e: any) {
+        setError(String(e));
+        pushLog(t('status.cleanupFail', { err: String(e) }));
+      }
+      return;
+    }
+    const handle = busy.startBusy('cleanup-clips', t('busy.title.cleanup-clips'));
+    const r = await window.api.cleanupClips(jobId, handle.callId);
+    if (r.ok) {
       (window as any).__closeWs?.();
       pushLog(t('status.cleanupDone', { n: 0, kb: '0.0' }));
       resetJobState();
-    } catch (e: any) {
-      setError(String(e));
-      pushLog(t('status.cleanupFail', { err: String(e) }));
+      handle.finish(true);
+    } else if (r.error === 'cancelled') {
+      handle.finish(false);
+    } else {
+      setError(t('status.cleanupFail', { err: r.error }));
+      handle.finish(false, t('busy.fail', { err: r.error }));
     }
   };
 
@@ -545,6 +613,9 @@ export default function App() {
   // Zip the active job's outputs into a single file the user can pass
   // around. IPC goes to the main process which uses archiver to walk
   // the job directory.
+  //
+  // Plan 005 — wrapped in a busy modal with callId-cancel; the main
+  // process aborts the underlying archiver and unlinks the half-zip.
   const handleExportPackage = async () => {
     if (!jobId) {
       setError(t('status.noExport'));
@@ -558,16 +629,22 @@ export default function App() {
       setError(t('status.noExportApi'));
       return;
     }
+    const handle = busy.startBusy('export-package', t('busy.title.export-package'));
     try {
-      const res = await window.api.exportPackage(jobId);
+      const res = await window.api.exportPackage(jobId, handle.callId);
       if (res.ok) {
         pushLog(t('status.opened', { path: String(res.path ?? '') }));
         setError(null);
+        handle.finish(true);
+      } else if (res.error === 'cancelled') {
+        handle.finish(false);
       } else {
-        if (res.error !== 'cancelled') setError(t('status.exportFail', { err: String(res.error ?? '') }));
+        setError(t('status.exportFail', { err: String(res.error ?? '') }));
+        handle.finish(false, t('busy.fail', { err: String(res.error ?? '') }));
       }
     } catch (e: any) {
       setError(t('status.exportFail', { err: String(e) }));
+      handle.finish(false, t('busy.fail', { err: String(e) }));
     }
   };
 
@@ -797,10 +874,19 @@ export default function App() {
           segmentsJsonAvailable={artifacts.segmentsJson}
           clipsAvailable={artifacts.clips}
           onOpenDir={async (id) => {
-            const r = await window.api?.openOutputDir?.(id);
+            if (!window.api?.openOutputDir) return;
+            const handle = busy.startBusy('open-output-dir', t('busy.title.open-output-dir'));
+            const r = await window.api.openOutputDir(id, handle.callId);
             if (r && !r.ok) {
-              // eslint-disable-next-line no-alert
-              alert(t('btn.openDir.fail') + r.error);
+              if (r.error === 'cancelled') {
+                handle.finish(false);
+              } else {
+                // eslint-disable-next-line no-alert
+                alert(t('btn.openDir.fail') + r.error);
+                handle.finish(false, t('busy.fail', { err: r.error }));
+              }
+            } else {
+              handle.finish(true);
             }
           }}
           onExportPackage={handleExportPackage}
@@ -854,6 +940,17 @@ export default function App() {
         <SettingsPanel
           onClose={() => setSettingsOpen(false)}
           onChange={(c) => setColors(c)}
+        />
+      )}
+
+      {/* Plan 005 — busy modal. zIndex 5000 puts it above Help/Settings/
+          Toast so any in-flight long op visually monopolises the UI. */}
+      {busyState && (
+        <BusyModal
+          busy={busyState}
+          iconUrl={iconUrl}
+          onCancel={() => window.api?.cancelCall?.(busyState.callId)}
+          t={t}
         />
       )}
     </div>

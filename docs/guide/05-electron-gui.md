@@ -14,6 +14,7 @@ src/
 ├── main/
 │   ├── index.ts             ← window creation + PythonSidecar lifecycle
 │   │                          + ipc handlers + menu + brand split
+│   ├── busy.ts              ← (plan 005) callId-cancel registry (AbortController map)
 │   ├── panels.ts            ← F12-style detachable Clips / Log windows
 │   └── settings.ts          ← userData, output_dir persistence
 ├── preload/
@@ -47,6 +48,7 @@ src/
             ├── HelpPanel.tsx          ← overlay: usage / params / menu / tips
             ├── SettingsPanel.tsx      ← overlay: annotation colors + output_dir
             ├── Toast.tsx              ← transient status toasts
+            ├── BusyModal.tsx          ← (plan 005) centred logo+spinner+取消 modal for long ops
             ├── Tooltip.tsx            ← uniform icon-only tooltip system
             ├── ErrorBoundary.tsx
             └── panels/
@@ -130,10 +132,13 @@ through `window.api.*` (preload). The full surface:
 | `pick-video` | `pickVideo()` | `string \| null` (absolute path, or null on cancel) |
 | `get-service-info` | `getServiceInfo()` | sidecar `SWING_SERVICE_URL` or `null` |
 | `get-dropped-file-path` (preload-only helper, not IPC) | `getDroppedFilePath(file)` | absolute path (uses `webUtils.getPathForFile` — Electron 32 removed `File.path`) |
-| `export-package` | `exportPackage(jobId)` | `{ ok, path }` or `{ ok: false, error }` |
+| `export-package` | `exportPackage(jobId, callId)` | `{ ok, path }` or `{ ok: false, error }` — `callId` (UUID) lets the renderer cancel mid-zip |
 | `open-external` | `openExternal(url)` | `boolean` (URL scheme http/https only) |
-| `open-output-dir` | `openOutputDir(jobId)` | `{ ok, path }` or `{ ok: false, error }` — opens `DATA_DIR/jobs/<id>/` in OS file manager |
-| `clear-output-dir` | `clearOutputDir()` | `{ ok, path, deleted_count, cleared_job_ids }` |
+| `open-output-dir` | `openOutputDir(jobId, callId)` | `{ ok, path }` or `{ ok: false, error }` — opens `DATA_DIR/jobs/<id>/` in OS file manager |
+| `clear-output-dir` | `clearOutputDir(callId)` | `{ ok, path, deleted_count, cleared_job_ids }` |
+| `cleanup-clips` | `cleanupClips(jobId, callId)` | `{ ok }` or `{ ok: false, error }` — main process forwards `DELETE /api/jobs/{id}` with `signal` to the sidecar; abort reaches the fetch |
+| `app:get-icon-data-url` | `getIconDataUrl()` | `string \| null` — base64 PNG data URL for the BusyModal logo |
+| `cancel-call` (event) | `cancelCall(callId)` | fire-and-forget — `ipcRenderer.send` only, no return; the main process aborts the matching `AbortController` |
 | `show-about` | `showAbout()` | `void` — modal dialog (brand + app title) |
 | `settings:get` | `getSettings()` | `{ output_dir, default_output_dir, configured_output_dir }` |
 | `settings:set-output-dir` | `setOutputDir(dir)` | `{ ok, output_dir }` or `{ ok: false, error }` — persisted to `userData/settings.json` |
@@ -165,6 +170,46 @@ The renderer receives each click as a `menu:<id>` IPC event and reacts
 the same way as the in-app button (open file dialog, trigger export,
 etc.), so the keyboard shortcuts work whether or not a panel window
 currently has focus.
+
+## Long-op busy modal (plan 005)
+
+Four ops get the centred "logo + spinner + 取消" modal: `export-package`,
+`clear-output-dir`, `cleanup-clips`, `open-output-dir`. Implementation is
+in `src/main/busy.ts` (callId-cancel registry) + `src/renderer/src/busy.ts`
+(imperative startBusy() → React setter bridge) + `src/renderer/src/components/BusyModal.tsx`:
+
+- **callId protocol.** Every long op handler takes a `callId: string`
+  second arg from the renderer (UUID minted via `crypto.randomUUID()`
+  with a `Math.random()` fallback for very old runtimes). It registers
+  an `AbortController` in a `Map<callId, AC>` and unregisters it in
+  `finally`. The renderer's 取消 button calls `window.api.cancelCall(callId)`
+  which sends a fire-and-forget `cancel-call` IPC; the main process
+  aborts the matching controller.
+- **Per-op cancel coverage.**
+  - `export-package`: archiver's `archive.abort()` triggers an `error`
+    event with message "Archive aborted"; main unlinks the half-zip in
+    `finally` so the user doesn't see a corrupted file.
+  - `clear-output-dir`: pre-check the abort flag before `rmSync`. The
+    syscall itself is uninterruptible mid-flight, so partially-deleted
+    jobs are NOT rolled back (documented limitation).
+  - `cleanup-clips`: the main process forwards the abort signal into
+    the sidecar fetch. If the sidecar doesn't honour the signal, the
+    Python service completes the delete and the closed fetch on the
+    node side is treated as `{ok:false, error:'cancelled'}` — best-effort.
+  - `open-output-dir`: effectively instant; the cancel button is a
+    no-op in practice (modal closes the moment `shell.openPath` returns).
+- **Panel freeze.** The main window includes its `busy` state in the
+  `PanelStateSnapshot` it pushes every 100 ms. Detached `ClipsPanelApp`
+  / `LogPanelApp` watch for a non-null `busy` and render a full-viewport
+  scrim with the localised "busy.frozen" text + `pointer-events:auto`,
+  forcing the user back to the main window where the modal lives.
+- **No new IPC for the freeze.** The existing `panel:push-state` /
+  `panel:state` channels already carry every snapshot field; adding
+  `busy` is just one more key in the payload, no new infrastructure.
+- **ESC handling.** The App-level `keydown` listener (capture phase)
+  swallows `Escape` whenever `busyState` is non-null so the user can't
+  accidentally close the modal via the same key that closes Help /
+  Settings panels. The user MUST explicitly click 取消.
 
 ## Renderer layout
 

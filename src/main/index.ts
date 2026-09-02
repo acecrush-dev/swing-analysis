@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, Menu, MenuItemConstructorOptions } from 'electron';
 import { join, resolve as resolvePath } from 'node:path';
 import { spawn, ChildProcessWithoutNullStreams } from 'node:child_process';
-import { existsSync, readdirSync, statSync, createWriteStream, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, statSync, createWriteStream, mkdirSync, rmSync, unlinkSync, readFileSync } from 'node:fs';
 import {
   openPanel,
   closePanel,
@@ -15,10 +15,7 @@ import {
   type PanelKind,
 } from './panels';
 import { loadSettings, saveSettings, defaultDataDir, setActiveDataDir, activeData } from './settings';
-// archiver ships with its own JS; no bundled types so we require it
-// dynamically and treat as any.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const archiver: any = require('archiver');
+import * as busy from './busy';
 
 interface ServiceInfo { host: string; port: number; url: string; }
 
@@ -272,7 +269,7 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => { sidecar.kill(); closeAllPanels(); });
+app.on('before-quit', () => { busy.cancelAllInflight(); sidecar.kill(); closeAllPanels(); });
 app.on('activate', () => {
   applyDockIcon(); // macOS can re-pool the Dock icon after relaunch
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -288,18 +285,26 @@ app.on('activate', () => {
 // DATA_DIR/jobs/<id> and shell.openPath it. The path may not exist yet
 // (cold start, cancelled before extraction) — in that case we create it
 // so the user sees an empty folder rather than nothing.
-ipcMain.handle('open-output-dir', async (_evt, jobId: string) => {
+ipcMain.handle('open-output-dir', async (_evt, jobId: string, callId: string) => {
   if (typeof jobId !== 'string' || !/^[a-zA-Z0-9_-]{4,64}$/.test(jobId)) {
     return { ok: false, error: 'invalid jobId' };
   }
-  const dir = join(DATA_DIR, 'jobs', jobId);
+  // Plan 005 — register callId-cancel. The actual IO is a mkdir + an
+  // openPath call, both effectively instant on this OS; the cancel
+  // button is a no-op in practice (modal will close the instant
+  // openPath returns). We still register so the contract is uniform.
+  const ac = busy.registerCall(callId);
   try {
+    if (ac.signal.aborted) return { ok: false, error: 'cancelled' };
+    const dir = join(DATA_DIR, 'jobs', jobId);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     const err = await shell.openPath(resolvePath(dir));
     if (err) return { ok: false, error: err };
     return { ok: true, path: dir };
   } catch (e: any) {
     return { ok: false, error: String(e) };
+  } finally {
+    busy.unregisterCall(callId);
   }
 });
 
@@ -384,19 +389,20 @@ ipcMain.on('panel:action-request', (_evt, action: unknown) => {
 // Pack the current job's output dir (segments.json + clips + viz.mp4)
 // into a single zip the user can hand off. Done in the main process so
 // the renderer doesn't need direct fs access.
-ipcMain.handle('export-package', async (_evt, jobId: string | null) => {
+ipcMain.handle('export-package', async (_evt, jobId: string | null, callId: string) => {
   if (!jobId) return { ok: false, error: 'no active job' };
-  const jobDir = join(app.getPath('userData'), '..', '..', 'backend', 'data', 'jobs', jobId);
-  // Fallback: try several known roots since dev / packaged layouts differ
-  const candidates = [
-    jobDir,
-    join(process.cwd(), 'backend', 'data', 'jobs', jobId),
-  ];
-  let resolved: string | null = null;
-  for (const p of candidates) {
-    try { if (existsSync(p)) { resolved = p; break; } } catch { /* */ }
-  }
-  if (!resolved) return { ok: false, error: 'job 不存在或已删除' };
+  // Use the same DATA_DIR the sidecar writes to (settings override
+  // honored). The previous ad-hoc candidates were wrong for packaged
+  // builds AND for any user who customised output_dir via Settings.
+  const resolved = join(DATA_DIR, 'jobs', jobId);
+  if (!existsSync(resolved)) return { ok: false, error: 'job 不存在或已删除' };
+  // Refuse to emit an empty zip — Archive Utility reports those as
+  // "cannot expand" and the user sees a broken file with no error.
+  try {
+    if (readdirSync(resolved).length === 0) {
+      return { ok: false, error: 'job 数据为空,无法打包' };
+    }
+  } catch { /* fall through — archiver will surface the real error */ }
 
   const save = await dialog.showSaveDialog({
     title: '导出 job 包',
@@ -405,15 +411,51 @@ ipcMain.handle('export-package', async (_evt, jobId: string | null) => {
   });
   if (save.canceled || !save.filePath) return { ok: false, error: 'cancelled' };
 
-  return await new Promise<{ ok: boolean; path?: string; error?: string }>((resolve) => {
-    const out = createWriteStream(save.filePath!);
-    const archive = archiver('zip', { zlib: { level: 9 } });
-    out.on('close', () => resolve({ ok: true, path: save.filePath! }));
-    out.on('error', (e: Error) => resolve({ ok: false, error: e.message }));
-    archive.on('error', (e: Error) => resolve({ ok: false, error: e.message }));
-    archive.pipe(out);
-    archive.directory(resolved!, jobId);
-    archive.final();
+  // Plan 005 — register callId-cancel. archiver.archive.abort() does
+  // NOT instantly stop the OS-level write (it's buffered), but it does
+  // surface as an `error` event with code "ERR_ARCHIVE_ABORTED" /
+  // message "Archive aborted", which our `archive.on('error', ...)`
+  // already routes to `{ok:false, error}`. The finally block unlinks
+  // the half-written zip so the user doesn't see a 0-byte / corrupted
+  // file in their downloads folder.
+  const ac = busy.registerCall(callId);
+  let aborted = false;
+  return await new Promise<{ ok: boolean; path?: string; error?: string }>(async (resolve) => {
+    const finish = (r: { ok: boolean; path?: string; error?: string }) => {
+      busy.unregisterCall(callId);
+      // If the user cancelled, nuke the half-zipped file.
+      if (aborted && save.filePath) {
+        try { unlinkSync(save.filePath); } catch { /* ignore */ }
+      }
+      resolve(r);
+    };
+    try {
+      // archiver 8.x is ESM-only ("type":"module"), so we can't `require()`
+      // it from this CJS main process — `require('archiver')` would yield
+      // the namespace object { Archiver, ZipArchive, ... }, not a callable,
+      // producing "archiver is not a function". Dynamic import + class.
+      const { ZipArchive } = await import('archiver');
+      const out = createWriteStream(save.filePath!);
+      const archive = new ZipArchive({ zlib: { level: 9 } });
+      const onAbort = () => {
+        aborted = true;
+        try { archive.abort(); } catch { /* ignore */ }
+      };
+      ac.signal.addEventListener('abort', onAbort);
+      out.on('close', () => finish({ ok: true, path: save.filePath! }));
+      out.on('error', (e: Error) => finish({ ok: false, error: e.message }));
+      archive.on('error', (e: Error) => {
+        // archiver surfaces "Archive aborted" with its own message —
+        // we don't want to leak that as a real failure to the user.
+        if (ac.signal.aborted) finish({ ok: false, error: 'cancelled' });
+        else finish({ ok: false, error: e.message });
+      });
+      archive.pipe(out);
+      archive.directory(resolved!, jobId);
+      archive.final();
+    } catch (e: any) {
+      finish({ ok: false, error: String(e) });
+    }
   });
 });
 
@@ -448,10 +490,18 @@ ipcMain.handle('show-about', () => {
 // Wipe the entire backend/data/jobs/ tree (i.e. the "output dir").
 // Used by the System → Clear Output Dir… menu item. Returns the
 // deleted job IDs so the renderer can clear matching in-memory state.
-ipcMain.handle('clear-output-dir', async () => {
-  const dir = join(DATA_DIR, 'jobs');
-  if (!existsSync(dir)) return { ok: true, path: dir, deleted_count: 0, cleared_job_ids: [] };
+//
+// Plan 005 — callId-cancel: rmSync is a single recursive syscall and
+// cannot be interrupted mid-flight; we register the controller so the
+// cancel signal is at least honored as a pre-check (if the user clicks
+// 取消 in the few hundred ms before the syscall actually starts).
+// Any deletions already made are NOT rolled back — see plan §5.
+ipcMain.handle('clear-output-dir', async (_evt, _payload: unknown, callId: string) => {
+  const ac = busy.registerCall(callId);
   try {
+    if (ac.signal.aborted) return { ok: false, error: 'cancelled' };
+    const dir = join(DATA_DIR, 'jobs');
+    if (!existsSync(dir)) return { ok: true, path: dir, deleted_count: 0, cleared_job_ids: [] };
     const before = readdirSync(dir);
     const ids = before.filter((n) => /^[a-zA-Z0-9_-]{4,64}$/.test(n));
     rmSync(dir, { recursive: true, force: true });
@@ -459,7 +509,66 @@ ipcMain.handle('clear-output-dir', async () => {
     return { ok: true, path: dir, deleted_count: ids.length, cleared_job_ids: ids };
   } catch (e: any) {
     return { ok: false, error: String(e) };
+  } finally {
+    busy.unregisterCall(callId);
   }
+});
+
+// Plan 005 — Cleanup Clips via main-process IPC. The previous
+// implementation in App.tsx called `client.delete(jobId)` directly
+// (a fetch to the Python sidecar). We now route it through here so
+// the cancel signal can reach the underlying fetch via AbortSignal —
+// the renderer no longer needs to know the sidecar URL for cleanup.
+ipcMain.handle('cleanup-clips', async (_evt, payload: { jobId: string }, callId: string) => {
+  const jobId = payload?.jobId;
+  if (typeof jobId !== 'string' || !/^[a-zA-Z0-9_-]{4,64}$/.test(jobId)) {
+    return { ok: false, error: 'invalid jobId' };
+  }
+  const ac = busy.registerCall(callId);
+  try {
+    if (ac.signal.aborted) return { ok: false, error: 'cancelled' };
+    const baseUrl = sidecar.baseUrl();
+    if (!baseUrl) return { ok: false, error: 'sidecar not ready' };
+    const res = await fetch(`${baseUrl}/api/jobs/${encodeURIComponent(jobId)}`, {
+      method: 'DELETE',
+      signal: ac.signal,
+    });
+    // 404 means the job is already gone — treat as success so the UI
+    // can complete cleanly even if the job vanished between menu open
+    // and click.
+    if (!res.ok && res.status !== 404) {
+      const body = await res.text().catch(() => '');
+      return { ok: false, error: `HTTP ${res.status}${body ? `: ${body}` : ''}` };
+    }
+    return { ok: true };
+  } catch (e: any) {
+    if (e?.name === 'AbortError') return { ok: false, error: 'cancelled' };
+    return { ok: false, error: String(e) };
+  } finally {
+    busy.unregisterCall(callId);
+  }
+});
+
+// Plan 005 — renderer asks for a base64 data URL of the app icon to
+// embed in the BusyModal. We read the PNG once and return it as a
+// data: URL so the renderer doesn't have to touch the fs and the
+// `<img>` element caches it for free.
+ipcMain.handle('app:get-icon-data-url', () => {
+  const p = appIconPath(true) ?? appIconPath();
+  if (!p) return null;
+  try {
+    const buf = readFileSync(p);
+    return `data:image/png;base64,${buf.toString('base64')}`;
+  } catch {
+    return null;
+  }
+});
+
+// Plan 005 — renderer's "取消" button triggers this. We just abort
+// the AbortController we registered when the IPC started. Idempotent —
+// a second call after the first one returns false.
+ipcMain.on('cancel-call', (_evt, callId: unknown) => {
+  if (typeof callId === 'string') busy.abortCall(callId);
 });
 
 // Build the application menu. Exactly two top-level menus — System

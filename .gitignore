@@ -69,3 +69,4 @@ htmlcov/
 .testcase*
 test-results/
 data
+*.zip

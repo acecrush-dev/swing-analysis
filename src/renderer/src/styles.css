@@ -78,3 +78,12 @@ a:hover {
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 }
+
+/* Plan 005 — BusyModal spinner. Inline-style rotation with a CSS
+   variable-driven accent colour so it picks up the active theme
+   automatically. 1.2s linear matches the modal's "feels responsive,
+   not frantic" pacing; faster reads as nervous, slower as stuck. */
+@keyframes busy-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}

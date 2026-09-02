@@ -73,6 +73,28 @@ export class SwingClient {
     await fetch(`${this.baseUrl}/api/jobs/${jobId}`, { method: 'DELETE' });
   }
 
+  /**
+   * Plan 005 — DELETE /api/jobs/{id} with an AbortSignal so the caller's
+   * 取消 button can short-circuit the in-flight fetch. We treat 404 as
+   * success (job already gone) and AbortError as {ok:false, error:'cancelled'}.
+   * Kept on the SwingClient as a general utility — App.tsx now goes
+   * through main-process `cleanupClips` instead, but other callers
+   * (CLI, future endpoints) can still use this directly.
+   */
+  async deleteWithSignal(jobId: string, signal: AbortSignal): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const r = await fetch(`${this.baseUrl}/api/jobs/${jobId}`, { method: 'DELETE', signal });
+      if (!r.ok && r.status !== 404) {
+        const t = await r.text().catch(() => '');
+        return { ok: false, error: `HTTP ${r.status}${t ? `: ${t}` : ''}` };
+      }
+      return { ok: true };
+    } catch (e: any) {
+      if (e?.name === 'AbortError') return { ok: false, error: 'cancelled' };
+      return { ok: false, error: String(e) };
+    }
+  }
+
   /** WebSocket event stream — auto-reconnect with resync via GET on reconnect. */
   openEvents(
     jobId: string,

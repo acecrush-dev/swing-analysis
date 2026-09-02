@@ -60,6 +60,13 @@ export function ClipsPanelApp() {
   const thumbUrl = (segId: number) =>
     client && jobId ? client.clipThumbUrl(jobId, segId) : '';
 
+  // Plan 005 — when the main window is busy, dim + intercept all clicks
+  // in this detached panel so the user is forced back to the main
+  // window's modal. We deliberately don't render the underlying panel
+  // controls (cleanup / recall) under the freeze — they're already
+  // unreachable thanks to pointer-events:none on the freeze overlay.
+  const isBusy = !!snap?.busy;
+
   return (
     <div
       style={{
@@ -73,6 +80,25 @@ export function ClipsPanelApp() {
         boxSizing: 'border-box',
       }}
     >
+      {isBusy && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'var(--scrim)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'var(--text)',
+            fontSize: 14,
+            fontWeight: 'bold',
+            zIndex: 5000,
+            pointerEvents: 'auto',
+          }}
+        >
+          {t('busy.frozen')}
+        </div>
+      )}
       <div
         style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',

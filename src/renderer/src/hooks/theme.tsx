@@ -35,6 +35,11 @@ const DARK: Record<string, string> = {
   '--warn': '#fa3',
   '--link': '#4af',
   '--shadow': 'rgba(0,0,0,0.4)',
+  // Plan 005 — semi-transparent dim layer used by the BusyModal
+  // overlay + the panel-freeze overlay. Slightly stronger than the
+  // drop-target yellow so the user knows it's a hard blocker, not
+  // a soft hint.
+  '--scrim': 'rgba(0,0,0,0.5)',
   // Job-state badge pairs (bg + contrasting fg) — chosen so each is
   // legible in both themes. Dark uses the existing vibrant tones; light
   // dials them down so they read on a near-white bg.
@@ -65,6 +70,7 @@ const LIGHT: Record<string, string> = {
   '--warn': '#e80',
   '--link': '#06c',
   '--shadow': 'rgba(0,0,0,0.1)',
+  '--scrim': 'rgba(0,0,0,0.35)',
   '--state-idle-bg': '#d0d0d0',     '--state-idle-fg': '#333',
   '--state-queued-bg': '#5a78c9',   '--state-queued-fg': '#fff',
   '--state-running-bg': '#3a7',     '--state-running-fg': '#fff',

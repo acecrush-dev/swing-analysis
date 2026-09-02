@@ -24,19 +24,35 @@ contextBridge.exposeInMainWorld('api', {
       return (file as any).path ?? '';
     }
   },
-  exportPackage: (jobId: string | null) =>
-    ipcRenderer.invoke('export-package', jobId) as Promise<ExportResult>,
+  exportPackage: (jobId: string | null, callId: string) =>
+    ipcRenderer.invoke('export-package', jobId, callId) as Promise<ExportResult>,
   openExternal: (url: string) =>
     ipcRenderer.invoke('open-external', url) as Promise<boolean>,
-  openOutputDir: (jobId: string) =>
-    ipcRenderer.invoke('open-output-dir', jobId) as Promise<
+  openOutputDir: (jobId: string, callId: string) =>
+    ipcRenderer.invoke('open-output-dir', jobId, callId) as Promise<
       { ok: true; path: string } | { ok: false; error: string }
     >,
   showAbout: () => ipcRenderer.invoke('show-about') as Promise<void>,
-  clearOutputDir: () => ipcRenderer.invoke('clear-output-dir') as Promise<
+  clearOutputDir: (callId: string) => ipcRenderer.invoke('clear-output-dir', {}, callId) as Promise<
     { ok: true; path: string; deleted_count: number; cleared_job_ids: string[] }
     | { ok: false; error: string }
   >,
+
+  // Plan 005 — new IPC for the Cleanup button on the ClipsBar; the
+  // callId-cancel is forwarded to the sidecar fetch so the user can
+  // 取消 mid-delete.
+  cleanupClips: (jobId: string, callId: string) =>
+    ipcRenderer.invoke('cleanup-clips', { jobId }, callId) as Promise<
+      { ok: true } | { ok: false; error: string }
+    >,
+
+  // Plan 005 — renderer's 取消 button triggers this. Fire-and-forget
+  // (ipcRenderer.send, not invoke) — we don't care about the result.
+  cancelCall: (callId: string) => { ipcRenderer.send('cancel-call', callId); },
+
+  // Plan 005 — embed app icon in the BusyModal. Returns a base64 PNG
+  // data URL (or null if no icon found — caller falls back to emoji).
+  getIconDataUrl: () => ipcRenderer.invoke('app:get-icon-data-url') as Promise<string | null>,
   onMenuEvent: (channel: string, cb: () => void) => {
     const handler = () => cb();
     ipcRenderer.on(channel, handler);
