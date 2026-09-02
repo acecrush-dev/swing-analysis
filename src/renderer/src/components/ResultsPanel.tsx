@@ -1,31 +1,17 @@
-import type { SwingClient } from '../api/client';
 import { EventLogList } from './EventLogList';
 import { Tooltip } from './Tooltip';
 import { useI18n } from '../i18n';
 
 interface Props {
-  client: SwingClient | null;
   jobId: string | null;
   logLines: string[];
   onClearLog: () => void;
-  onDeleteJob: () => void;
-  onExportPackage: () => void;
-  vizMode: boolean;
-  onToggleViz: () => void;
-  // Each flag is true only when the backend HEAD probe confirmed the
-  // artifact actually exists on disk. Hides the corresponding button /
-  // link so the user can never click into a 404.
-  vizAvailable: boolean;
-  segmentsJsonAvailable: boolean;
-  // clipsAvailable is retained in props for backwards-compat — the
-  // 📁 clips/ link was replaced by the "📁 打开目录" button which
-  // surfaces viz.mp4 + segments.json + the whole clips/ tree together.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  clipsAvailable?: boolean;
   // Plan 004 — F12-style detachable event-log panel. When detached,
   // the inline log list collapses to a slim placeholder row that
-  // offers a 📍 收回 button. Footer (viz / downloads / delete) is
-  // untouched in either mode.
+  // offers a 📍 收回 button. The action toolbar (viz / downloads /
+  // export / delete) used to live in this panel's footer but moved
+  // up to the left column between ProgressPanel and ClipsBar so it
+  // sits next to the artifacts it controls.
   logDetached?: boolean;
   onDetachLog?: () => void;
   onRecallLog?: () => void;
@@ -42,14 +28,16 @@ const ICON_BTN: React.CSSProperties = {
   lineHeight: 1,
 };
 
+// Pure log panel now. The viz / download / open-dir / export / delete
+// toolbar used to be the footer of this panel but moved to
+// `ResultsActionsBar` (left column, between ProgressPanel and
+// ClipsBar). Keeps this panel scoped to what it always should have
+// been: just the event-log list + its clear / detach controls.
 export function ResultsPanel({
-  client, jobId, logLines, onClearLog, onDeleteJob, onExportPackage,
-  vizMode, onToggleViz,
-  vizAvailable, segmentsJsonAvailable,
+  logLines, onClearLog,
   logDetached, onDetachLog, onRecallLog,
 }: Props) {
   const { t } = useI18n();
-  const hasJob = !!jobId;
   return (
     <div style={{
       flex: 1, overflow: 'auto', padding: 12, borderTop: '1px solid var(--border)',
@@ -113,83 +101,6 @@ export function ResultsPanel({
       ) : (
         <EventLogList logLines={logLines} />
       )}
-
-      {/* Footer: viz playback toggle + download links + delete-job */}
-      <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-        <Tooltip text={vizAvailable ? t('viz.play') : t('viz.unavailable')}>
-          <button
-            onClick={onToggleViz}
-            disabled={!vizAvailable}
-            style={{
-              ...ICON_BTN,
-              background: vizMode ? 'var(--accent)' : 'var(--bg-elev)',
-              color: vizMode ? 'var(--accent-fg)' : (vizAvailable ? 'var(--text)' : 'var(--text-dim)'),
-              border: '1px solid ' + (vizMode ? 'var(--accent)' : 'var(--border)'),
-              fontWeight: vizMode ? 'bold' : 'normal',
-              cursor: vizAvailable ? 'pointer' : 'default',
-            }}
-          >
-            {vizMode ? '◼' : '🎬'}
-          </button>
-        </Tooltip>
-        {client && jobId && (
-          <>
-            {segmentsJsonAvailable && (
-              <a href={client.artifactUrl(jobId, 'segments.json')} download
-                 style={{ color: 'var(--link)', fontSize: 11 }}>{t('dl.segments')}</a>
-            )}
-            {vizAvailable && (
-              <a href={client.artifactUrl(jobId, 'viz.mp4')} download
-                 style={{ color: 'var(--link)', fontSize: 11 }}>{t('dl.viz')}</a>
-            )}
-          </>
-        )}
-        {jobId && (
-          <Tooltip text={t('btn.openDir')}>
-            <button
-              onClick={async () => {
-                const r = await window.api?.openOutputDir?.(jobId);
-                if (r && !r.ok) {
-                  // eslint-disable-next-line no-alert
-                  alert(t('btn.openDir.fail') + r.error);
-                }
-              }}
-              style={ICON_BTN}
-            >
-              📁
-            </button>
-          </Tooltip>
-        )}
-        <Tooltip text={hasJob ? t('btn.export.title') : t('btn.export.disabled')}>
-          <button
-            onClick={onExportPackage}
-            disabled={!hasJob}
-            style={{
-              ...ICON_BTN,
-              marginLeft: 'auto',
-              color: hasJob ? 'var(--text)' : 'var(--text-dim)',
-              cursor: hasJob ? 'pointer' : 'default',
-            }}
-          >
-            📦
-          </button>
-        </Tooltip>
-        <Tooltip text={hasJob ? t('btn.deleteJob.title') : t('btn.deleteJob.disabled')}>
-          <button
-            onClick={onDeleteJob}
-            disabled={!hasJob}
-            style={{
-              ...ICON_BTN,
-              background: hasJob ? 'var(--danger-bg)' : 'transparent',
-              color: hasJob ? 'var(--danger)' : 'var(--text-dim)',
-              border: '1px solid ' + (hasJob ? 'var(--danger-border)' : 'var(--border)'),
-              cursor: hasJob ? 'pointer' : 'default',
-            }}
-          >
-            🗑
-          </button>
-        </Tooltip>
-      </div>
     </div>
   );
 }

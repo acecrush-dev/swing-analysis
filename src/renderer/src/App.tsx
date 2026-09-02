@@ -6,6 +6,7 @@ import { ParamsForm } from './components/ParamsForm';
 import { ProgressPanel } from './components/ProgressPanel';
 import { ResultsPanel } from './components/ResultsPanel';
 import { ClipsBar } from './components/ClipsBar';
+import { ResultsActionsBar } from './components/ResultsActionsBar';
 import { useTheme } from './hooks/theme';
 import { HelpPanel } from './components/HelpPanel';
 import { SettingsPanel, loadColors } from './components/SettingsPanel';
@@ -95,11 +96,18 @@ export default function App() {
   // Per-artifact existence flags. Populated by HEAD probes after the
   // job reaches done. The right panel uses these to hide download links
   // and the viz-play button that would 404 anyway.
+  // `vizH264` is true when the backend also wrote a sibling
+  // viz_h264.mp4 (post-receipt 039 transcode); the `<video>` element
+  // uses that one because Chromium cannot decode the cv2-written
+  // mp4v fourcc inside viz.mp4. When vizH264=false we still keep
+  // `viz` true (download link works) but the in-GUI player just
+  // won't have anything playable.
   const [artifacts, setArtifacts] = useState<{
     segmentsJson: boolean;
     viz: boolean;
+    vizH264: boolean;
     clips: boolean;
-  }>({ segmentsJson: false, viz: false, clips: false });
+  }>({ segmentsJson: false, viz: false, vizH264: false, clips: false });
 
   // Sorted-clips view used for BOTH the ClipsBar render and the panel
   // snapshot. Concurrent annotations can finish out of seg_id order
@@ -159,20 +167,14 @@ export default function App() {
         if (!r) return;
         if (r.ok) {
           pushLog(t('status.outputCleared', { path: r.path, n: r.deleted_count }));
-          // Local state — if the cleared dir included the active job,
-          // wipe the in-memory state so the UI doesn't keep showing
-          // ghosts of artifacts that are gone.
-          if (jobId && r.cleared_job_ids?.includes(jobId)) {
-            setJobId(null);
-            setSegments([]);
-            setSelectedSeg(null);
-            setClips([]);
-            setActiveClip(null);
-            setProgress(null);
-            setClipProc({});
-            setVizMode(false);
-            setJobState('idle');
-          }
+          // Always reset the React side after a successful wipe — the
+          // cleared_job_ids check was leaving the UI in a half-state
+          // when the user's current jobId didn't happen to match one
+          // of the just-deleted IDs (e.g. the IPC wiped every other
+          // job but ours wasn't tracked yet). Resetting unconditionally
+          // mirrors what the user expects: "clean output → fresh start".
+          (window as any).__closeWs?.();
+          resetJobState();
         } else if (r.error !== 'cancelled') {
           setError(t('status.clearOutputFail', { err: r.error }));
         }
@@ -397,6 +399,25 @@ export default function App() {
     }
   };
 
+  // Wipe every job-related React state back to "nothing here, ready
+  // for the next video". Shared by all three cleanup paths (the
+  // toolbar 🗑 Delete button, the ClipsBar 🧹 Cleanup button, and
+  // the System → Clear Output Dir menu) so they all leave the GUI
+  // looking identical: empty events log context, no selected segment,
+  // no clips cards, no viz button enabled, no stale job_id sitting
+  // around that the WS would re-attach to.
+  const resetJobState = () => {
+    setJobId(null);
+    setSegments([]);
+    setSelectedSeg(null);
+    setClips([]);
+    setActiveClip(null);
+    setProgress(null);
+    setClipProc({});
+    setVizMode(false);
+    setJobState('idle');
+  };
+
   // Delete the entire job — wipes /api/data/jobs/{id} from disk.
   const deleteJob = async () => {
     if (!client || !jobId) return;
@@ -410,16 +431,7 @@ export default function App() {
       // Close the live WS if any
       (window as any).__closeWs?.();
       pushLog(t('status.deleted', { id: jobId }));
-      // Reset everything
-      setJobId(null);
-      setSegments([]);
-      setSelectedSeg(null);
-      setClips([]);
-      setActiveClip(null);
-      setProgress(null);
-      setClipProc({});
-      setVizMode(false);
-      setJobState('idle');
+      resetJobState();
     } catch (e: any) {
       setError(String(e));
       pushLog(t('status.deleteFail', { err: String(e) }));
@@ -434,40 +446,52 @@ export default function App() {
       .catch((e) => setError(t('status.err.listClips', { err: String(e) })));
   }, [client, jobId, jobState]);
 
-  // HEAD-probe each artifact once the job is done. Cancelling resets
-  // everything to "false" so the UI hides links / buttons that would
-  // 404. Doesn't run while the job is running — we don't want to spam
-  // the server with HEAD requests per frame.
+  // HEAD-probe each artifact once the job reaches a terminal state.
+  // Cancelling used to flip everything back to "false" and grey the
+  // "viz" button even when Pass 2 had already written viz.mp4 to disk
+  // before the cancel landed — Pass 1.5 (clip flush, see receipt 027)
+  // means a cancel mid-Pass-2 is a real flow. Now we probe on done /
+  // failed / cancelled and let the HEAD response speak. We still skip
+  // while the job is running to avoid hammering the server per-frame.
   useEffect(() => {
     if (!client || !jobId) {
-      setArtifacts({ segmentsJson: false, viz: false, clips: false });
+      setArtifacts({ segmentsJson: false, viz: false, vizH264: false, clips: false });
       return;
     }
-    if (jobState !== 'done') {
-      // If the job failed/was cancelled and never wrote some files,
-      // hide those links too.
-      setArtifacts({ segmentsJson: false, viz: false, clips: false });
+    if (jobState !== 'done' && jobState !== 'failed' && jobState !== 'cancelled') {
+      // Pre-terminal: assume nothing is on disk yet. The probe effect
+      // re-runs the moment state flips to a terminal.
+      setArtifacts({ segmentsJson: false, viz: false, vizH264: false, clips: false });
       return;
     }
     let cancelled = false;
+    // Probes with `GET` + `Range: bytes=0-0` instead of `HEAD` because
+    // FastAPI's `@app.get(...)` route does NOT advertise `HEAD` — a
+    // HEAD request returns 405 Method Not Allowed, r.ok is false, and
+    // the probe silently fails. Range GET returns 206 Partial Content
+    // (still 2xx so r.ok is true) with just 1 byte so we don't pull
+    // the whole 13 MB viz.mp4 just to learn it exists.
     const headOk = async (rel: string): Promise<boolean> => {
       try {
-        const r = await fetch(client.artifactUrl(jobId, rel), { method: 'HEAD' });
-        return r.ok;
+        const r = await fetch(client.artifactUrl(jobId, rel), {
+          headers: { Range: 'bytes=0-0' },
+        });
+        return r.ok || r.status === 206;
       } catch {
         return false;
       }
     };
     (async () => {
       try {
-        const [segmentsJson, viz, clips] = await Promise.all([
+        const [segmentsJson, viz, vizH264, clips] = await Promise.all([
           headOk('segments.json'),
           headOk('viz.mp4'),
+          headOk('viz_h264.mp4'),
           client.listClips(jobId).then((cs) => Array.isArray(cs) && cs.length > 0).catch(() => false),
         ]);
-        if (!cancelled) setArtifacts({ segmentsJson, viz, clips });
+        if (!cancelled) setArtifacts({ segmentsJson, viz, vizH264, clips });
       } catch {
-        if (!cancelled) setArtifacts({ segmentsJson: false, viz: false, clips: false });
+        if (!cancelled) setArtifacts({ segmentsJson: false, viz: false, vizH264: false, clips: false });
       }
     })();
     return () => { cancelled = true; };
@@ -491,6 +515,13 @@ export default function App() {
     if (seg) setSelectedSeg({ ...seg });
   };
 
+  // Cleanup button in the ClipsBar — full job wipe, same endpoint
+  // as the toolbar 🗑 Delete-job button. The previous behavior only
+  // deleted the `clips/` subdirectory, leaving viz.mp4 + segments.json
+  // on disk and the React state stale; the user expects "clean" to
+  // mean "everything gone, UI refreshed". This now mirrors `deleteJob`
+  // — we keep the entry points separate because the ClipsBar is the
+  // natural place to click it (next to the clips it cleans up).
   const handleCleanupClips = async () => {
     if (!client || !jobId) return;
     if (jobState === 'running' || jobState === 'queued') {
@@ -499,13 +530,10 @@ export default function App() {
     }
     if (!window.confirm(t('status.confirmCleanup'))) return;
     try {
-      const res = await client.cleanupClips(jobId);
-      setClips([]);
-      setActiveClip(null);
-      pushLog(t('status.cleanupDone', {
-        n: res.deleted_count,
-        kb: (res.freed_bytes / 1024).toFixed(1),
-      }));
+      await client.delete(jobId);
+      (window as any).__closeWs?.();
+      pushLog(t('status.cleanupDone', { n: 0, kb: '0.0' }));
+      resetJobState();
     } catch (e: any) {
       setError(String(e));
       pushLog(t('status.cleanupFail', { err: String(e) }));
@@ -606,12 +634,17 @@ export default function App() {
     ? segments.find((s) => s.seg_id === activeClip.seg_id) ?? null
     : null;
   // Priority for video src:
-  //   1. vizMode on → viz.mp4
+  //   1. vizMode on → viz_h264.mp4 (Chromium can't decode the cv2-written
+  //      mp4v inside viz.mp4 on macOS/Linux; the backend also writes a
+  //      sibling viz_h264.mp4 after Pass 2 — prefer it for in-place play).
+  //      Falls back to viz.mp4 when the transcode didn't run (no ffmpeg).
   //   2. active clip → clip stream (if playable) else original
   //   3. selectedSeg / no active → original video
   let videoSrc: string | null = null;
   if (vizMode && client && jobId) {
-    videoSrc = client.artifactUrl(jobId, 'viz.mp4');
+    videoSrc = artifacts.vizH264
+      ? client.artifactUrl(jobId, 'viz_h264.mp4')
+      : client.artifactUrl(jobId, 'viz.mp4');
   } else if (activeClip && client && jobId) {
     videoSrc = activeClip.playable
     ? client.clipStreamUrl(jobId, activeClip.seg_id)
@@ -663,11 +696,11 @@ export default function App() {
           {t('app.dropHint')}
         </div>
       )}
-      {/* Left column — title → video → progress → clips (pinned) */}
+      {/* Left column — title → video → progress → actions toolbar → clips (pinned) */}
       <div
         style={{
           display: 'grid',
-          gridTemplateRows: 'auto 1fr auto auto',
+          gridTemplateRows: 'auto 1fr auto auto auto',
           padding: 16,
           gap: 8,
           minHeight: 0,
@@ -749,6 +782,30 @@ export default function App() {
           clipsDiscovered={segments.length}
           clipProcessing={clipProc}
         />
+        {/* Per-job actions toolbar — moved out of the right-column
+            ResultsPanel footer so it sits next to the segments / clips
+            it acts on (between the segmentation panel and the clips
+            grid). Sibling-level placement keeps it visually separated
+            from the progress controls above. */}
+        <ResultsActionsBar
+          client={client}
+          jobId={jobId}
+          vizMode={vizMode}
+          onToggleViz={() => setVizMode((v) => !v)}
+          vizAvailable={artifacts.viz}
+          vizH264Available={artifacts.vizH264}
+          segmentsJsonAvailable={artifacts.segmentsJson}
+          clipsAvailable={artifacts.clips}
+          onOpenDir={async (id) => {
+            const r = await window.api?.openOutputDir?.(id);
+            if (r && !r.ok) {
+              // eslint-disable-next-line no-alert
+              alert(t('btn.openDir.fail') + r.error);
+            }
+          }}
+          onExportPackage={handleExportPackage}
+          onDeleteJob={deleteJob}
+        />
         <ClipsBar
           clips={sortedClips}
           segments={segments}
@@ -777,17 +834,9 @@ export default function App() {
       >
         <ParamsForm params={params} onChange={setParams} disabled={jobState === 'running'} />
         <ResultsPanel
-          client={client}
           jobId={jobId}
           logLines={logLines}
           onClearLog={handleClearLog}
-          onDeleteJob={deleteJob}
-          onExportPackage={handleExportPackage}
-          vizMode={vizMode}
-          onToggleViz={() => setVizMode((v) => !v)}
-          vizAvailable={artifacts.viz}
-          segmentsJsonAvailable={artifacts.segmentsJson}
-          clipsAvailable={artifacts.clips}
           logDetached={panelOpen.log}
           onDetachLog={detachLog}
           onRecallLog={recallLog}

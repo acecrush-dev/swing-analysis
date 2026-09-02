@@ -173,12 +173,20 @@ def cmd_segment(args) -> int:
             on_clip_annotated=on_clip_annotated,
             should_cancel=should_cancel,
         )
-    except JobCancelled:
-        print("[cancelled] 已终止", flush=True)
-        return 130
     except Exception as exc:  # noqa: BLE001
         print(f"\nERROR: {exc!r}", file=sys.stderr)
         return 1
+
+    # run_pipeline no longer raises JobCancelled — it returns normally
+    # with whatever partial results it managed to write (segments.json
+    # + a stub-or-real viz.mp4 if viz_video was on). The CLI uses its
+    # own cancel flag to decide whether the run actually completed.
+    if cancelled["v"]:
+        segs = payload.get("segments", []) or []
+        print(f"[cancelled] 收尾完成, 已写出 {len(segs)} 个已检出周期 (再跑一次可以分段完赛)",
+              flush=True)
+        print(f"  JSON: {out_dir / 'segments.json'}", flush=True)
+        return 130
 
     elapsed = time.time() - t0
     print()

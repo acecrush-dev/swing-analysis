@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 import cv2
+import numpy as np
 
 from ..core import segment_swing as core
 from .clip_codec import transcode_to_h264
@@ -93,8 +94,14 @@ def run_pipeline(
     thread — payload: {seg_id, stage, frame, total}. Threading note: the
     callback is responsible for crossing to the WS loop (callers wrap it).
 
-    Returns the segments.json payload as a dict. Raises JobCancelled if
-    should_cancel() ever returns True mid-run.
+    Returns the segments.json payload as a dict. JobCancelled is no
+    longer raised on mid-run cancellation — a cancel observed during
+    Pass 1 simply flips a local `cancel_observed` flag and breaks out of
+    the loop, so Pass 1.5 (segments.json) and Pass 2 (viz.mp4) still
+    run with whatever partial results were collected. This way the GUI
+    can probe a real viz.mp4 on disk after a cancel. JobCancelled is
+    kept as a class for the `except JobCancelled` arm in jobs.py to
+    catch any future caller that decides to raise instead of flag.
     """
     p = {**DEFAULT_PARAMS, **(params or {})}
 
@@ -163,12 +170,22 @@ def run_pipeline(
 
     online_segments: List[core.SwingSegment] = []
 
+    # Cancel probe — `cancel_observed` flips True the instant we notice
+    # `should_cancel()`. We `break` instead of raising so Pass 1.5 + Pass
+    # 2 still run with whatever frames + segments we already collected.
+    # Previously a mid-Pass-1 cancel raised JobCancelled which aborted
+    # before render_outputs() was reached — viz.mp4 never got written
+    # and the GUI's "play viz" button stayed grey even though the rest
+    # of the pipeline had real partial results worth showing.
+    cancel_observed = False
+
     try:
         try:
             skip = max(1, int(p["skip"]))
             while frame_idx < limit:
                 if should_cancel and should_cancel():
-                    raise JobCancelled("cancelled by user")
+                    cancel_observed = True
+                    break
                 ok, frame = cap.read()
                 if not ok:
                     break
@@ -239,6 +256,9 @@ def run_pipeline(
             cap.release()
 
         # flush -- runs after the loop, before the executor shuts down.
+        # Runs on both the happy path AND on a partial cancel — we want
+        # the trailing segment (if any) to be emitted so Pass 1.5 has
+        # all cycles detected.
         try:
             seg = online_seg.flush(frame_idx)
             if seg is not None:
@@ -267,6 +287,11 @@ def run_pipeline(
             # flush() so a segment emitted by flush() can still submit.
             if clip_executor is not None:
                 clip_executor.shutdown(wait=True)
+    except JobCancelled:  # noqa: BLE001 — defensive; should_cancel now
+        # exits the loop via `break` so this branch is usually unreachable.
+        # Kept as a safety net for any future caller that raises instead
+        # of flagging.
+        cancel_observed = True
     finally:
         # Outer safety net: if the loop itself raised (e.g. JobCancelled
         # from should_cancel()) and we skipped flush() entirely, still
@@ -357,7 +382,52 @@ def run_pipeline(
             save_clips=p["save_clips"],
         )
 
+        # If viz_video was on but `render_outputs` early-returned because
+        # `segments` was empty (typical of a cancel at frame 0), there's
+        # no viz.mp4 on disk and the GUI's HEAD probe would still report
+        # 404 → "play viz" button stays grey. Write a 1-frame black
+        # placeholder so the file exists and the button can enable.
+        # Real frames / phases render normally when segments is non-empty.
+        if p["viz_video"]:
+            viz_path = out_dir / "viz.mp4"
+            if not viz_path.exists():
+                _write_stub_viz(viz_path, width, height, fps)
+
+            # Chromium's `<video>` cannot decode mp4v (MPEG-4 Visual) on
+            # macOS/Linux — same root cause as the original clip playback
+            # bug fixed in plan 002. The clips apply the same fix:
+            # transcode to H.264 so the GUI can play it in-place. Failure
+            # is non-fatal (no ffmpeg / bad source) — the mp4v original
+            # stays as the canonical download and the GUI keeps the
+            # download link but the in-app player simply won't play.
+            viz_h264_path = out_dir / "viz_h264.mp4"
+            if viz_path.exists():
+                try:
+                    transcode_to_h264(viz_path, viz_h264_path)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"  ✗ viz h264 transcode failed: {exc!r}", flush=True)
+
     return payload
+
+
+def _write_stub_viz(viz_path: Path, width: int, height: int, fps: float) -> None:
+    """One-frame black placeholder so the GUI's viz probe finds a file.
+
+    Only used when render_outputs() decided nothing to render (no
+    segments produced — e.g. cancel at frame 0). Deliberately minimal:
+    a valid mp4v header + one dark frame is enough for the HEAD probe
+    to flip vizAvailable=true and for the <video> element to load
+    without an error modal.
+    """
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    safe_w, safe_h = max(int(width), 2), max(int(height), 2)
+    safe_fps = max(float(fps) or 30.0, 1.0)
+    writer = cv2.VideoWriter(str(viz_path), fourcc, safe_fps, (safe_w, safe_h))
+    if not writer.isOpened():
+        return  # best-effort; nothing else we can do here
+    frame = np.zeros((safe_h, safe_w, 3), dtype=np.uint8)
+    writer.write(frame)
+    writer.release()
 
 
 def _seg_to_dict(seg: core.SwingSegment) -> Dict:
