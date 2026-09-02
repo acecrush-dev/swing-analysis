@@ -59,15 +59,51 @@ function validHex(v: unknown, fallback: string): string {
 
 interface Props { onClose: () => void; onChange?: (c: ColorSettings) => void; }
 
+type DirInfo = {
+  output_dir: string;
+  default_output_dir: string;
+  configured_output_dir: string | null;
+};
+
 export function SettingsPanel({ onClose, onChange }: Props) {
   const { t } = useI18n();
   const [colors, setColors] = useState<ColorSettings>(() => loadColors());
+  // Jobs output dir — persisted main-process side (userData/settings.json),
+  // applied to the sidecar's --data-dir on next launch.
+  const [dirInfo, setDirInfo] = useState<DirInfo | null>(null);
+  const [dirNote, setDirNote] = useState<'' | 'saved' | 'failed'>('');
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  useEffect(() => {
+    window.api?.getSettings?.().then(setDirInfo).catch(() => { /* non-electron env */ });
+  }, []);
+
+  const refreshDir = () => {
+    window.api?.getSettings?.().then(setDirInfo).catch(() => { /* */ });
+  };
+
+  const pickOutputDir = async () => {
+    try {
+      const r = await window.api.pickOutputDir();
+      if (!r.ok || !r.path) return; // cancelled
+      const res = await window.api.setOutputDir(r.path);
+      setDirNote(res.ok ? 'saved' : 'failed');
+      if (res.ok) refreshDir();
+    } catch { setDirNote('failed'); }
+  };
+
+  const resetOutputDir = async () => {
+    try {
+      const res = await window.api.setOutputDir(null);
+      setDirNote(res.ok ? 'saved' : 'failed');
+      if (res.ok) refreshDir();
+    } catch { setDirNote('failed'); }
+  };
 
   // Persist + bubble on every change.
   useEffect(() => {
@@ -122,6 +158,70 @@ export function SettingsPanel({ onClose, onChange }: Props) {
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {/* ── jobs output dir ──────────────────────────────────── */}
+          <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 14, marginBottom: 4 }}>
+            <div style={{ fontSize: 13, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 8 }}>
+              📂 {t('settings.outputDir')}
+              {dirInfo && dirInfo.configured_output_dir === null && (
+                <span style={{
+                  fontSize: 10, opacity: 0.7, border: '1px solid var(--border)',
+                  borderRadius: 3, padding: '0 5px',
+                }}>
+                  {t('settings.outputDir.defaultTag')}
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: 11, opacity: 0.65, marginTop: 2, marginBottom: 8 }}>
+              {t('settings.outputDir.desc')}
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <code
+                title={dirInfo?.output_dir ?? ''}
+                style={{
+                  flex: 1, fontSize: 11, fontFamily: 'ui-monospace, monospace',
+                  background: 'var(--bg-elev)', color: 'var(--text-muted)',
+                  border: '1px solid var(--border)', borderRadius: 4,
+                  padding: '4px 8px', overflow: 'hidden',
+                  textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}
+              >
+                {dirInfo?.output_dir ?? '…'}
+              </code>
+              <button
+                onClick={pickOutputDir}
+                style={{
+                  background: 'var(--bg-elev)', color: 'var(--text)',
+                  border: '1px solid var(--border)', borderRadius: 4,
+                  padding: '4px 12px', cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap',
+                }}
+              >
+                📁 {t('settings.outputDir.pick')}
+              </button>
+              <button
+                onClick={resetOutputDir}
+                disabled={!dirInfo || dirInfo.configured_output_dir === null}
+                style={{
+                  background: 'var(--bg-elev)', color: 'var(--text)',
+                  border: '1px solid var(--border)', borderRadius: 4,
+                  padding: '4px 12px', cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap',
+                  opacity: dirInfo && dirInfo.configured_output_dir !== null ? 1 : 0.45,
+                }}
+              >
+                ↺ {t('settings.outputDir.reset')}
+              </button>
+            </div>
+            {dirNote === 'saved' && (
+              <div style={{ fontSize: 11, color: 'var(--accent)', marginTop: 6 }}>
+                ✓ {t('settings.outputDir.saved')}
+              </div>
+            )}
+            {dirNote === 'failed' && (
+              <div style={{ fontSize: 11, color: 'var(--warn)', marginTop: 6 }}>
+                ✗ {t('settings.outputDir.saveFailed')}
+              </div>
+            )}
+          </div>
+
           <ColorRow
             label={t('settings.color_bbox')}
             desc={t('settings.color_bbox.desc')}

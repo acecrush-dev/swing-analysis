@@ -43,6 +43,21 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener(channel, handler);
   },
 
+  // ── settings: jobs output dir ──────────────────────────────────
+  getSettings: () => ipcRenderer.invoke('settings:get') as Promise<{
+    output_dir: string;
+    default_output_dir: string;
+    configured_output_dir: string | null;
+  }>,
+  setOutputDir: (dir: string | null) =>
+    ipcRenderer.invoke('settings:set-output-dir', dir) as Promise<
+      { ok: true; output_dir: string } | { ok: false; error: string }
+    >,
+  pickOutputDir: () =>
+    ipcRenderer.invoke('settings:pick-output-dir') as Promise<
+      { ok: true; path: string | null } | { ok: false; error: string }
+    >,
+
   // ── plan 004: panel windows ────────────────────────────────────
   openPanel: (kind: 'clips' | 'log') =>
     ipcRenderer.invoke('panel:open', kind) as Promise<{ ok: boolean; error?: string }>,

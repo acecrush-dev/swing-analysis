@@ -16,6 +16,7 @@ post-hoc enrichment.
 """
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional
@@ -96,6 +97,41 @@ class ClipAnnotator:
         self._rtmdet = rtmdet
         self._rtmpose = rtmpose
         self._mediapipe = mediapipe
+        # MediaPipe VIDEO-mode guards. `detect_for_video` requires strictly
+        # increasing timestamps (each clip's local ts restarts at 0, which
+        # raised "ValueError: Input timestamp must be monotonically
+        # increasing" on the first frame of every clip after the first,
+        # leaving 0-frame _annotated.mp4 poison files that then broke the
+        # H.264 preview), and the underlying graph is not thread-safe
+        # (run_pipeline's clip_executor runs 2 workers).
+        #
+        # First fix serialized whole clips behind one lock — correct, but
+        # it dropped mediapipe to 1 concurrent annotation while rtmpose
+        # kept 2. Now each executor worker thread owns its own
+        # PoseLandmarker + its own ts cursor via `_mp_local`
+        # (threading.local): init is paid once per worker (~0.5s) then
+        # reused across clips, and clips on different workers annotate in
+        # parallel — same concurrency as rtmpose.
+        self._mp_local = threading.local()
+
+    def _mp_acquire(self):
+        """Per-worker MediaPipe runner + fresh ts window for one clip.
+
+        Returns (runner, ts_base, local) where `local` is this thread's
+        threading.local view. ts_base continues THIS worker's own timeline
+        (+1s gap after its last clip) so `detect_for_video` always sees
+        strictly increasing ts on this detector instance. Different workers
+        use different detector instances, so their timelines are fully
+        independent — no lock, full 2-way parallelism.
+        """
+        local = self._mp_local
+        runner = getattr(local, "runner", None)
+        if runner is None:
+            runner = self._mediapipe or MediaPipePoseRunner(_default_mp_task_path())
+            local.runner = runner
+            local.last_ts = -1
+        local.last_ts += 1000
+        return runner, local.last_ts, local
 
     def annotate_clip(
         self,
@@ -114,6 +150,14 @@ class ClipAnnotator:
         color_pose_left: Optional[str] = None,
         color_pose_right: Optional[str] = None,
         color_pose_body: Optional[str] = None,
+        # Optional cooperative-cancel probe, called once per frame. When it
+        # returns True the loop stops early and any partial `clip_out` is
+        # deleted (so callers fall back to the raw clip instead of
+        # transcoding a truncated overlay). This is what makes job cancel
+        # responsive: run_pipeline passes its `should_cancel` through, so
+        # the clip executor's shutdown(wait=True) no longer has to wait
+        # for every remaining frame of RTMPose/MediaPipe to finish.
+        cancel_cb: Optional[Callable[[], bool]] = None,
     ) -> AnnotateResult:
         """Run bbox + skeleton overlay on one clip; write to clip_out.
 
@@ -161,95 +205,129 @@ class ClipAnnotator:
         if total_frames < 0:
             total_frames = 0
 
-        # Lazy-load models on first use.
-        if bbox and self._rtmdet is None:
-            self._rtmdet = RtmdetRunner(_default_rtmdet_path())
-        if skel:
-            if skel_backend == "mediapipe":
-                if self._mediapipe is None:
-                    self._mediapipe = MediaPipePoseRunner(_default_mp_task_path())
-                pose_runner: object = self._mediapipe
-            else:
-                if self._rtmpose is None:
-                    self._rtmpose = RtmposeRunner(_default_rtmpose_path())
-                pose_runner = self._rtmpose
-
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         writer = cv2.VideoWriter(str(clip_out), fourcc, fps, (w, h))
         if not writer.isOpened():
             cap.release()
             raise RuntimeError(f"无法写 {clip_out}")
 
-        if progress_cb is not None:
-            try:
-                progress_cb(stage, 0, total_frames)
-            except Exception:  # noqa: BLE001
-                pass
-
-        # Resolve the four user-configurable colours. We accept either a
-        # hex string ("rrggbb" / "#rrggbb") or `None` (use the module
-        # default). Anything unparseable degrades gracefully — better
-        # to draw the wrong colour than to abort the whole job.
-        def _hex_or_default(val, default):
-            if not val:
-                return default
-            try:
-                return hex_to_bgr(val)
-            except (ValueError, TypeError):
-                return default
-
-        bbox_bgr = _hex_or_default(color_bbox, DEFAULT_COLOR_BBOX)
-        left_bgr = _hex_or_default(color_pose_left,  DEFAULT_COLOR_POSE_LEFT)
-        right_bgr = _hex_or_default(color_pose_right, DEFAULT_COLOR_POSE_RIGHT)
-        body_bgr  = _hex_or_default(color_pose_body,  DEFAULT_COLOR_POSE_BODY)
-        side_colors_mp33  = _side_color_map_mp33(left_bgr, right_bgr, body_bgr)
-        side_colors_coco  = _side_color_map_coco13(left_bgr, right_bgr, body_bgr)
-
+        # Lazy-load models on first use. The mediapipe branch grabs this
+        # worker's own detector + ts window (see _mp_acquire / __init__).
+        mp_ts_base = -1      # >0 iff the mediapipe path is active
+        mp_local = None      # this thread's ts cursor when active
+        pose_runner = None
         frames = 0
         issues: List[str] = []
-        rtmdet = self._rtmdet
+        loop_failed = False
+        cancelled = False
         try:
-            while True:
-                ok, frame = cap.read()
-                if not ok:
-                    break
-                canvas = frame
+            if bbox and self._rtmdet is None:
+                self._rtmdet = RtmdetRunner(_default_rtmdet_path())
+            if skel:
+                if skel_backend == "mediapipe":
+                    pose_runner, mp_ts_base, mp_local = self._mp_acquire()
+                else:
+                    if self._rtmpose is None:
+                        self._rtmpose = RtmposeRunner(_default_rtmpose_path())
+                    pose_runner = self._rtmpose
 
-                bboxes: List[BBox] = []
-                if bbox:
-                    bboxes = rtmdet.detect(canvas)
-                    draw_bboxes(canvas, bboxes, color=bbox_bgr)
+            if progress_cb is not None:
+                try:
+                    progress_cb(stage, 0, total_frames)
+                except Exception:  # noqa: BLE001
+                    pass
 
-                if skel:
-                    ts_ms = int((frames / fps) * 1000.0)
-                    if skel_backend == "mediapipe":
-                        kps = pose_runner.pose(canvas, ts_ms)
-                        if kps is not None and len(kps) >= 33:
-                            draw_skeleton_mp33(
-                                canvas, kps, _MP_33_SKELETON,
-                                side_colors=side_colors_mp33,
-                            )
-                    else:
-                        # RTMPose: prefer using the top RTMDet bbox as ROI when
-                        # bbox is also enabled — cheaper + more accurate.
-                        roi_box = bboxes[0] if (bbox and bboxes) else None
-                        kps = pose_runner.pose(canvas, roi_box)
-                        if kps is not None and len(kps) >= 13:
-                            draw_skeleton_coco13(
-                                canvas, kps,
-                                side_colors=side_colors_coco,
-                            )
+            # Resolve the four user-configurable colours. We accept either a
+            # hex string ("rrggbb" / "#rrggbb") or `None` (use the module
+            # default). Anything unparseable degrades gracefully — better
+            # to draw the wrong colour than to abort the whole job.
+            def _hex_or_default(val, default):
+                if not val:
+                    return default
+                try:
+                    return hex_to_bgr(val)
+                except (ValueError, TypeError):
+                    return default
 
-                writer.write(canvas)
-                frames += 1
-                if progress_cb is not None and (frames % 5 == 0):
-                    try:
-                        progress_cb(stage, frames, total_frames)
-                    except Exception:  # noqa: BLE001
-                        pass
+            bbox_bgr = _hex_or_default(color_bbox, DEFAULT_COLOR_BBOX)
+            left_bgr = _hex_or_default(color_pose_left,  DEFAULT_COLOR_POSE_LEFT)
+            right_bgr = _hex_or_default(color_pose_right, DEFAULT_COLOR_POSE_RIGHT)
+            body_bgr  = _hex_or_default(color_pose_body,  DEFAULT_COLOR_POSE_BODY)
+            side_colors_mp33  = _side_color_map_mp33(left_bgr, right_bgr, body_bgr)
+            side_colors_coco  = _side_color_map_coco13(left_bgr, right_bgr, body_bgr)
+
+            rtmdet = self._rtmdet
+            try:
+                while True:
+                    if cancel_cb is not None and cancel_cb():
+                        issues.append("cancelled by user")
+                        cancelled = True
+                        break
+                    ok, frame = cap.read()
+                    if not ok:
+                        break
+                    canvas = frame
+
+                    bboxes: List[BBox] = []
+                    if bbox:
+                        bboxes = rtmdet.detect(canvas)
+                        draw_bboxes(canvas, bboxes, color=bbox_bgr)
+
+                    if skel:
+                        if skel_backend == "mediapipe":
+                            ts_ms = mp_ts_base + int((frames / fps) * 1000.0)
+                            if ts_ms > mp_local.last_ts:
+                                mp_local.last_ts = ts_ms
+                            kps = pose_runner.pose(canvas, ts_ms)
+                            if kps is not None and len(kps) >= 33:
+                                draw_skeleton_mp33(
+                                    canvas, kps, _MP_33_SKELETON,
+                                    side_colors=side_colors_mp33,
+                                )
+                        else:
+                            # RTMPose: prefer using the top RTMDet bbox as ROI when
+                            # bbox is also enabled — cheaper + more accurate.
+                            roi_box = bboxes[0] if (bbox and bboxes) else None
+                            kps = pose_runner.pose(canvas, roi_box)
+                            if kps is not None and len(kps) >= 13:
+                                draw_skeleton_coco13(
+                                    canvas, kps,
+                                    side_colors=side_colors_coco,
+                                )
+
+                    writer.write(canvas)
+                    frames += 1
+                    if progress_cb is not None and (frames % 5 == 0):
+                        try:
+                            progress_cb(stage, frames, total_frames)
+                        except Exception:  # noqa: BLE001
+                            pass
+            except Exception:
+                loop_failed = True
+                raise
+            finally:
+                cap.release()
+                writer.release()
+        except Exception:
+            loop_failed = True
+            raise
         finally:
+            # Idempotent double-release with the loop's finally; this one
+            # also covers failures before the loop even started (e.g. ONNX
+            # init) so cap/writer never leak.
             cap.release()
             writer.release()
+            # A failed or cancelled run must not leave a truncated overlay
+            # file behind: pipeline.py prefers `*_annotated.mp4` as the
+            # H.264 transcode source whenever the file exists, so a
+            # 0/partial-frame poison file would break the preview for the
+            # whole clip. Delete it → caller falls back to the raw clip
+            # and the preview stays playable.
+            if loop_failed or cancelled:
+                try:
+                    clip_out.unlink(missing_ok=True)
+                except OSError:
+                    pass
         if progress_cb is not None:
             try:
                 progress_cb(stage, frames, total_frames)
@@ -268,10 +346,11 @@ def annotate_clip(
     out_path: Optional[Path] = None,
     annotator: Optional[ClipAnnotator] = None,
     progress_cb: Optional[Callable[[str, int, int], None]] = None,
+    cancel_cb: Optional[Callable[[], bool]] = None,
 ) -> AnnotateResult:
     """Functional entry point — convenient for one-shot calls."""
     ann = annotator or ClipAnnotator()
     return ann.annotate_clip(
         clip_in, out_path, bbox=bbox, skel=skel, skel_backend=skel_backend,
-        progress_cb=progress_cb,
+        progress_cb=progress_cb, cancel_cb=cancel_cb,
     )

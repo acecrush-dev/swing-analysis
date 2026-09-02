@@ -147,6 +147,14 @@ def draw_skeleton_mp33(
     conn_thick: int = 2,
     conf_thresh: float = 0.3,
     side_colors: Dict[int, Tuple[int, int, int]] | None = None,
+    # Keypoint → side tables matching the topology of `skeleton`/`kps`.
+    # Defaults are the MediaPipe-33 sets; draw_skeleton_coco13 overrides
+    # them with the COCO-13 sets. BUGFIX: this used to hardcode the MP33
+    # sets, so a COCO-13 side_colors map (keys 0-12) classified every
+    # keypoint as 'C'entRE → the whole rtmpose skeleton rendered in the
+    # single body colour regardless of the Settings panel.
+    left_ids: Tuple[int, ...] = LEFT_IDS_MP33,
+    right_ids: Tuple[int, ...] = RIGHT_IDS_MP33,
 ) -> np.ndarray:
     """Draw a MediaPipe-33 (or any matching) skeleton.
 
@@ -174,9 +182,9 @@ def draw_skeleton_mp33(
     side_of: Dict[int, str] = {}
     if side_colors is not None:
         for k in side_colors:
-            if k in LEFT_IDS_MP33:
+            if k in left_ids:
                 side_of[k] = 'L'
-            elif k in RIGHT_IDS_MP33:
+            elif k in right_ids:
                 side_of[k] = 'R'
             else:
                 side_of[k] = 'C'
@@ -232,4 +240,6 @@ def draw_skeleton_coco13(
         kp_radius=kp_radius, conn_thick=conn_thick,
         conf_thresh=conf_thresh,
         side_colors=side_colors,
+        left_ids=LEFT_IDS_COCO13,
+        right_ids=RIGHT_IDS_COCO13,
     )

@@ -216,6 +216,7 @@ def run_pipeline(
                             p.get("color_pose_left"),
                             p.get("color_pose_right"),
                             p.get("color_pose_body"),
+                            should_cancel,
                         )
 
                 if progress_cb is not None:
@@ -259,6 +260,7 @@ def run_pipeline(
                         p.get("color_pose_left"),
                         p.get("color_pose_right"),
                         p.get("color_pose_body"),
+                        should_cancel,
                     )
         finally:
             # Shutdown the executor LAST (and only once). It MUST be after
@@ -395,6 +397,14 @@ def _extract_and_maybe_annotate(
     color_pose_left: Optional[str] = None,
     color_pose_right: Optional[str] = None,
     color_pose_body: Optional[str] = None,
+    # Cooperative-cancel probe shared with run_pipeline's main loop.
+    # Checked at task start, between annotation frames (via
+    # ClipAnnotator.cancel_cb), and before the H.264 transcode — this is
+    # what makes 取消 responsive: without it, clip_executor's
+    # shutdown(wait=True) waits for every remaining annotation frame
+    # (minutes of RTMPose/MediaPipe on CPU) and the GUI's cancel appears
+    # to do nothing.
+    should_cancel: Optional[Callable[[], bool]] = None,
 ) -> None:
     """Background task: extract one clip, then optionally annotate it.
 
@@ -412,6 +422,11 @@ def _extract_and_maybe_annotate(
 
     clip_mp4 = clips_dir / f"clip_{seg.seg_id:03d}.mp4"
     if not clip_mp4.exists():
+        return
+
+    # Cancel probe #1 — queued tasks that never started exit immediately
+    # so shutdown(wait=True) drains the queue in milliseconds.
+    if should_cancel is not None and should_cancel():
         return
 
     if annotator is not None and (bbox or skel):
@@ -440,6 +455,7 @@ def _extract_and_maybe_annotate(
                 color_pose_left=color_pose_left,
                 color_pose_right=color_pose_right,
                 color_pose_body=color_pose_body,
+                cancel_cb=should_cancel,
             )
             if on_clip_annotated is not None:
                 on_clip_annotated({
@@ -454,6 +470,12 @@ def _extract_and_maybe_annotate(
         except Exception as exc:  # noqa: BLE001
             # annotation failure must not break segmentation
             print(f"  ✗ clip {seg.seg_id:03d} annotate failed: {exc!r}", flush=True)
+
+    # Cancel probe #2 — if cancel arrived while this task ran, bail out
+    # before the H.264 transcode + GUI event so shutdown(wait=True)
+    # returns promptly and the job flips to `cancelled` within ~a frame.
+    if should_cancel is not None and should_cancel():
+        return
 
     # H.264 preview for Chromium <video> (plan 002). mp4v original is kept
     # as the canonical download artifact. plan 003 follow-up: when

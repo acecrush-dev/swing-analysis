@@ -39,6 +39,19 @@ declare global {
         { ok: true; path: string; deleted_count: number; cleared_job_ids: string[] }
         | { ok: false; error: string }
       >;
+
+      // ── settings: jobs output dir ─────────────────────────────
+      getSettings: () => Promise<{
+        output_dir: string;                    // active this session
+        default_output_dir: string;            // built-in default
+        configured_output_dir: string | null;  // null = using default
+      }>;
+      setOutputDir: (dir: string | null) => Promise<
+        { ok: true; output_dir: string } | { ok: false; error: string }
+      >;
+      pickOutputDir: () => Promise<
+        { ok: true; path: string | null } | { ok: false; error: string }
+      >;
     };
   }
 }

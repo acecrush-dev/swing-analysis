@@ -14,6 +14,7 @@ import {
   setPanelActionSink,
   type PanelKind,
 } from './panels';
+import { loadSettings, saveSettings, defaultDataDir, setActiveDataDir, activeData } from './settings';
 // archiver ships with its own JS; no bundled types so we require it
 // dynamically and treat as any.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -39,7 +40,7 @@ class PythonSidecar {
     }
     const repoRoot = join(__dirname, '..', '..');
     const args = ['-m', 'backend.service', '--port', '0',
-                  '--data-dir', join(repoRoot, 'backend', 'data')];
+                  '--data-dir', activeData()];
     console.log('[sidecar] spawning:', this.pythonBin, args.join(' '));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -70,9 +71,12 @@ class PythonSidecar {
   }
 
   kill() {
-    if (this.proc && !this.proc.killed) {
-      try { process.kill(-this.proc.pid); } catch {}
-      try { this.proc.kill(); } catch {}
+    const proc = this.proc; // local binding: TS narrows `this.proc` poorly across the try blocks
+    if (proc && !proc.killed) {
+      if (typeof proc.pid === 'number') {
+        try { process.kill(-proc.pid); } catch {}
+      }
+      try { proc.kill(); } catch {}
     }
     this.proc = null;
     this.info = null;
@@ -90,6 +94,16 @@ const candidates = [
   join(repoRoot, 'backend', '.venv', 'bin', 'python'),
 ];
 const pythonBin = candidates.find(existsSync) ?? 'python3';
+
+// Jobs/output root. The Settings panel can point this anywhere
+// (userData/settings.json → `output_dir`); the built-in default is
+// <repoRoot>/backend/data. Captured ONCE here because the sidecar reads
+// --data-dir only at spawn — a settings change applies on next launch,
+// and the IPC handlers below must agree with where jobs actually land.
+const DATA_DIR_DEFAULT = defaultDataDir();
+const CONFIGURED_DATA_DIR: string | null = loadSettings().output_dir;
+const DATA_DIR: string = CONFIGURED_DATA_DIR ?? DATA_DIR_DEFAULT;
+setActiveDataDir(DATA_DIR);
 
 const sidecar = new PythonSidecar(pythonBin);
 
@@ -145,18 +159,10 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 
-// Resolve the data dir from the sidecar CLI flags so IPC handlers can
-// reconstruct per-job out_dir paths without round-tripping to the
-// Python service. Matches backend/service/jobs.py: jobs_root =
-// data_dir / "jobs" / job_id.
-function resolveDataDir(): string {
-  // Sidecar is spawned with --data-dir relative to repoRoot; mirror that
-  // resolution so we can hit the same on-disk layout from the main
-  // process.
-  const repoRoot = join(__dirname, '..', '..');
-  return join(repoRoot, 'backend', 'data');
-}
-const DATA_DIR = resolveDataDir();
+// DATA_DIR is defined at module scope above (settings.json `output_dir`
+// or the built-in default) so IPC handlers reconstruct per-job out_dir
+// paths without round-tripping to the Python service. Matches
+// backend/service/jobs.py: jobs_root = data_dir / "jobs" / job_id.
 
 // Open the job's output directory in the OS file manager. Renderer
 // supplies the job_id (UUID12 like "abc123de45f6"); we look it up under
@@ -189,6 +195,42 @@ ipcMain.handle('pick-video', async () => {
 });
 
 ipcMain.handle('get-service-info', () => sidecar.baseUrl());
+
+// ── Settings: jobs output dir ─────────────────────────────────────
+// The Settings panel reads/writes via these. `set-output-dir` accepts a
+// path (created if missing) or null/'' to reset to the built-in default.
+// Nothing is applied to the running sidecar — spawn reads --data-dir
+// once, so the panel shows a "restart to apply" note after a change.
+ipcMain.handle('settings:get', () => ({
+  output_dir: DATA_DIR,                     // active this session
+  default_output_dir: DATA_DIR_DEFAULT,     // built-in default
+  configured_output_dir: CONFIGURED_DATA_DIR, // null = using default
+}));
+
+ipcMain.handle('settings:set-output-dir', async (_evt, dir: unknown) => {
+  // Reset to default
+  if (dir === null || dir === undefined || dir === '') {
+    if (!saveSettings({ output_dir: null })) return { ok: false, error: 'write failed' };
+    return { ok: true, output_dir: DATA_DIR_DEFAULT };
+  }
+  if (typeof dir !== 'string' || !dir.trim()) return { ok: false, error: 'bad path' };
+  const trimmed = dir.trim();
+  try {
+    mkdirSync(trimmed, { recursive: true });
+  } catch (e: any) {
+    return { ok: false, error: String(e) };
+  }
+  if (!saveSettings({ output_dir: trimmed })) return { ok: false, error: 'write failed' };
+  return { ok: true, output_dir: trimmed };
+});
+
+ipcMain.handle('settings:pick-output-dir', async () => {
+  const r = await dialog.showOpenDialog({
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (r.canceled || !r.filePaths[0]) return { ok: true, path: null };
+  return { ok: true, path: r.filePaths[0] };
+});
 
 // ── Plan 004: F12-style detachable panels ─────────────────────────
 // Each panel window is its own BrowserWindow (per-kind single-instance)
