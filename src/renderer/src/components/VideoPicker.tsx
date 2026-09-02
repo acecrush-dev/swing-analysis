@@ -8,41 +8,37 @@ interface Props {
   onPick: () => void;
   client: SwingClient | null;
   selectedSeg: Segment | null;
-  // Clip overlay (plan 002). When `clipUrl` is non-null the <video> plays
-  // the clip stream; when null it falls back to the original video file.
   activeClip: ClipInfo | null;
-  clipUrl: string | null;
   clipSegment: Segment | null;
   onReturnToOriginal: () => void;
+  vizMode: boolean;
+  videoSrc: string | null;
 }
 
+/**
+ * Video picker — fills all available vertical space inside its parent
+ * (the parent grid row is `1fr`; we make the picker a flex column that
+ * gives the video area `flex:1`). The <video> element uses
+ * object-fit:contain so it shows in full (preserves aspect ratio) and
+ * never gets cropped. The controls bar always sits at the bottom of
+ * the visible video so the user can pause/seek.
+ */
 export function VideoPicker({
   videoPath,
   onPick,
   client,
   selectedSeg,
   activeClip,
-  clipUrl,
   clipSegment,
   onReturnToOriginal,
+  vizMode,
+  videoSrc,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  // Decide the <video> src: clip stream when active AND playable,
-  // otherwise original (no H.264 → fall back to seek original video).
-  const src = (clipUrl && activeClip?.playable)
-    ? clipUrl
-    : (videoPath && client ? client.videoUrl(videoPath) : null);
-
   useEffect(() => {
-    // Seek on either path:
-    //  - no active clip → original-video mode, jump to selectedSeg.start_timecode
-    //  - active clip but non-playable (mp4v) → original-video mode, jump to
-    //    the clicked clip's start_timecode via selectedSeg (App sets both).
-    // In playable-clip mode the source is the clip stream itself, so we
-    // don't seek — the clip is short and plays from 0.
     if (!videoRef.current) return;
-    if (!activeClip && selectedSeg) {
+    if (!activeClip && selectedSeg && !vizMode) {
       const tcToSec = (tc: string) => {
         const [m, rest] = tc.split(':');
         const [s] = rest.split('.');
@@ -51,34 +47,89 @@ export function VideoPicker({
       videoRef.current.currentTime = tcToSec(selectedSeg.start_timecode);
       videoRef.current.play().catch(() => { /* autoplay may fail; ignore */ });
     }
-  }, [selectedSeg, activeClip]);
+  }, [selectedSeg, activeClip, vizMode]);
 
   return (
-    <div style={{ marginBottom: 16 }}>
-      <div style={{ marginBottom: 8 }}>
-        <button onClick={onPick}>📁 选择视频…</button>
-        {videoPath && <span style={{ marginLeft: 12, opacity: 0.7 }}>{videoPath}</span>}
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      flex: 1,
+      minHeight: 0,
+      width: '100%',
+    }}>
+      {/* Header — fixed size, never grows */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        marginBottom: 8,
+        flex: '0 0 auto',
+      }}>
+        <button onClick={onPick} style={{
+          background: 'var(--bg-elev)',
+          color: 'var(--text)',
+          border: '1px solid var(--border)',
+          padding: '4px 12px',
+          borderRadius: 4,
+          cursor: 'pointer',
+          fontSize: 13,
+        }}>📁 选择视频…</button>
+        {videoPath && <span style={{ opacity: 0.7, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{videoPath}</span>}
+        {vizMode && (
+          <span style={{
+            marginLeft: 'auto',
+            background: 'var(--accent)',
+            color: 'var(--accent-fg)',
+            padding: '2px 8px',
+            borderRadius: 3,
+            fontSize: 11,
+            fontWeight: 'bold',
+            whiteSpace: 'nowrap',
+          }}>
+            ▶ 播放 viz.mp4
+          </span>
+        )}
       </div>
-      {src && (
-        <div style={{ position: 'relative' }}>
+
+      {/* Video area — fills remaining vertical space. overflow:hidden so
+          a too-wide video never grows a horizontal scrollbar; the video
+          itself uses object-fit:contain to scale down properly. */}
+      <div style={{
+        flex: 1,
+        minHeight: 0,
+        position: 'relative',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        overflow: 'hidden',
+        background: '#000',
+      }}>
+        {videoSrc ? (
           <video
-            key={src /* re-mount on source change so currentTime resets */}
+            key={videoSrc /* re-mount on source change so currentTime resets */}
             ref={videoRef}
             controls
             preload="metadata"
             style={{
-              width: '100%',
-              maxHeight: '50vh',
-              background: '#000',
               display: 'block',
+              width: '100%',
+              height: '100%',
+              maxWidth: '100%',
+              maxHeight: '100%',
+              objectFit: 'contain',
+              background: '#000',
             }}
-            src={src}
+            src={videoSrc}
           />
-          {activeClip && (
-            <ClipPlayer clip={activeClip} seg={clipSegment} onReturn={onReturnToOriginal} />
-          )}
-        </div>
-      )}
+        ) : (
+          <div style={{ color: 'var(--text-dim)', fontSize: 12, padding: 16 }}>
+            请选个视频文件，或选个 clip / viz 来看
+          </div>
+        )}
+        {activeClip && !vizMode && videoSrc && (
+          <ClipPlayer clip={activeClip} seg={clipSegment} onReturn={onReturnToOriginal} />
+        )}
+      </div>
     </div>
   );
 }

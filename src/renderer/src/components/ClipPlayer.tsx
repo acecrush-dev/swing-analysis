@@ -28,7 +28,7 @@ export function ClipPlayer({ clip, seg, onReturn }: Props) {
         top: 10,
         left: 10,
         background: 'rgba(0,0,0,0.78)',
-        color: '#ffeb3b',
+        color: 'var(--accent)',
         padding: '8px 12px',
         borderRadius: 6,
         fontSize: 14,
@@ -39,7 +39,7 @@ export function ClipPlayer({ clip, seg, onReturn }: Props) {
         alignItems: 'center',
         gap: 10,
         maxWidth: 'calc(100% - 24px)',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+        boxShadow: '0 2px 8px var(--shadow)',
         pointerEvents: 'auto',
       }}
     >
@@ -47,8 +47,8 @@ export function ClipPlayer({ clip, seg, onReturn }: Props) {
       <span>clip #{clip.seg_id} · {tcLine}{contact}</span>
       {!playable && (
         <span style={{
-          background: '#fa3',
-          color: '#000',
+          background: 'var(--warn)',
+          color: 'var(--accent-fg)',
           padding: '1px 6px',
           borderRadius: 3,
           fontSize: 11,
@@ -60,8 +60,8 @@ export function ClipPlayer({ clip, seg, onReturn }: Props) {
       <button
         onClick={(e) => { e.stopPropagation(); onReturn(); }}
         style={{
-          background: '#ffeb3b',
-          color: '#000',
+          background: 'var(--accent)',
+          color: 'var(--accent-fg)',
           border: 'none',
           borderRadius: 4,
           padding: '4px 10px',

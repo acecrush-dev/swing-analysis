@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { SwingClient } from './api/client';
 import { DEFAULT_PARAMS, type ClipInfo, type JobParams, type Segment } from './api/types';
 import { VideoPicker } from './components/VideoPicker';
@@ -6,12 +6,40 @@ import { ParamsForm } from './components/ParamsForm';
 import { ProgressPanel } from './components/ProgressPanel';
 import { ResultsPanel } from './components/ResultsPanel';
 import { ClipsBar } from './components/ClipsBar';
+import { useTheme } from './hooks/theme';
+import { HelpPanel } from './components/HelpPanel';
 
 declare global {
-  interface Window { api: { pickVideo: () => Promise<string|null>; getServiceInfo: () => Promise<string|null> }; }
+  interface Window {
+    api: {
+      pickVideo: () => Promise<string|null>;
+      getServiceInfo: () => Promise<string|null>;
+      getDroppedFilePath: (file: File) => string;
+      exportPackage: (jobId: string | null) => Promise<{ ok: boolean; path?: string; error?: string }>;
+      openExternal: (url: string) => Promise<boolean>;
+      showAbout: () => Promise<void>;
+      onMenuEvent: (channel: string, cb: () => void) => () => void;
+    };
+  }
 }
 
+// Allowed video extensions (kept in sync with the dialog filter on the
+// main-process side). Anything dropped that doesn't match is rejected
+// with a friendly error instead of being shoved into the pipeline.
+const VIDEO_EXTS = ['mp4', 'mov', 'm4v', 'avi', 'mkv', 'webm'] as const;
+function isVideoPath(p: string): boolean {
+  const m = p.match(/\.([a-z0-9]+)$/i);
+  return !!m && VIDEO_EXTS.includes(m[1].toLowerCase() as any);
+}
+
+// Tiny state for the drop-target visual feedback (kept around for
+// future per-drop metadata; currently only `active` is tracked inline).
+interface DropState { active: boolean; }
+
 export default function App() {
+  const { theme, toggle } = useTheme();
+  const [dropActive, setDropActive] = useState(false);
+  const dropCounter = useRef(0);
   const [baseUrl, setBaseUrl] = useState<string | null>(null);
   const [videoPath, setVideoPath] = useState<string | null>(null);
   const [params, setParams] = useState<JobParams>(DEFAULT_PARAMS);
@@ -25,8 +53,22 @@ export default function App() {
   // Clips (plan 002)
   const [clips, setClips] = useState<ClipInfo[]>([]);
   const [activeClip, setActiveClip] = useState<ClipInfo | null>(null);
-  // Right-panel event log feed. Plain text lines, newest at the bottom.
   const [logLines, setLogLines] = useState<string[]>([]);
+  // Viz mode: video player shows the pipeline-rendered viz.mp4 instead
+  // of the original video / a clip. Set when the user clicks the
+  // "🎬 可视化完整视频" button in the right-panel footer.
+  const [vizMode, setVizMode] = useState(false);
+  // Help overlay (plan 002 M22)
+  const [helpOpen, setHelpOpen] = useState(false);
+
+  // Per-artifact existence flags. Populated by HEAD probes after the
+  // job reaches done. The right panel uses these to hide download links
+  // and the viz-play button that would 404 anyway.
+  const [artifacts, setArtifacts] = useState<{
+    segmentsJson: boolean;
+    viz: boolean;
+    clips: boolean;
+  }>({ segmentsJson: false, viz: false, clips: false });
 
   const pushLog = (line: string) => setLogLines((prev) => {
     const next = [...prev, line];
@@ -44,6 +86,32 @@ export default function App() {
     })();
   }, []);
 
+  // Wire native menu items (File → Open File / Export Package) and the
+  // Help → About trigger. Help Content + docs link are handled in main
+  // process (shell.openExternal).
+  useEffect(() => {
+    if (!window.api?.onMenuEvent) return;
+    const offOpen = window.api.onMenuEvent('menu:open-file', () => {
+      // re-use the existing flow — fire a fake pick that mimics clicking
+      // the "选择视频…" button
+      (async () => {
+        const p = await window.api.pickVideo();
+        if (p) {
+          setError(null);
+          setVideoPath(p);
+          pushLog(`📁 菜单打开文件: ${p}`);
+        }
+      })();
+    });
+    const offExport = window.api.onMenuEvent('menu:export-package', () => {
+      handleExportPackage();
+    });
+    const offAbout = window.api.onMenuEvent('menu:about', () => {
+      window.api?.showAbout?.();
+    });
+    return () => { offOpen(); offExport(); offAbout(); };
+  }, []);
+
   const client = useMemo(() => baseUrl ? new SwingClient(baseUrl) : null, [baseUrl]);
 
   const startJob = async () => {
@@ -53,6 +121,7 @@ export default function App() {
     setSelectedSeg(null);
     setClips([]);
     setActiveClip(null);
+    setVizMode(false);
     setLogLines([]);
     setProgress(null);
     setJobState('queued');
@@ -64,8 +133,6 @@ export default function App() {
       const close = client.openEvents(
         r.job_id,
         (e: any) => {
-          // Defensive — wrap the whole handler so a single malformed event
-          // can never tear down the React tree.
           try {
             if (!e || typeof e !== 'object' || !e.type) return;
             const data: any = e.data ?? {};
@@ -95,9 +162,6 @@ export default function App() {
               pushLog(`🎯 clip #${data.seg_id} 标注完成`);
             }
             if (e.type === 'clip.generated') {
-              // plan 002 M13 — push the new clip into the UI immediately.
-              // The thumbnail loads lazily on first <img> render (cached
-              // on disk by GET /thumbnail.jpg after that).
               const info: ClipInfo = {
                 seg_id: typeof data.seg_id === 'number' ? data.seg_id : 0,
                 exists: !!data.exists,
@@ -170,8 +234,34 @@ export default function App() {
     }
   };
 
-  // Fetch clips once the job reaches done. Re-runs on reconnect-driven
-  // jobState flips too, so a stale UI snaps back.
+  // Delete the entire job — wipes /api/data/jobs/{id} from disk.
+  const deleteJob = async () => {
+    if (!client || !jobId) return;
+    if (jobState === 'running') {
+      setError('运行中的 job 不能删除，请先取消');
+      return;
+    }
+    if (!window.confirm(`删除整个 job？所有 clips 和 viz.mp4 都会从磁盘清空（backend/data/jobs/${jobId}/）。`)) return;
+    try {
+      await client.delete(jobId);
+      // Close the live WS if any
+      (window as any).__closeWs?.();
+      pushLog(`🗑 job ${jobId} 已删除`);
+      // Reset everything
+      setJobId(null);
+      setSegments([]);
+      setSelectedSeg(null);
+      setClips([]);
+      setActiveClip(null);
+      setProgress(null);
+      setVizMode(false);
+      setJobState('idle');
+    } catch (e: any) {
+      setError(String(e));
+      pushLog(`✗ 删除失败: ${String(e)}`);
+    }
+  };
+
   useEffect(() => {
     if (!client || !jobId) return;
     if (jobState !== 'done') return;
@@ -180,9 +270,48 @@ export default function App() {
       .catch((e) => setError(`listClips: ${e}`));
   }, [client, jobId, jobState]);
 
-  // ── clip handlers (plan 002) ────────────────────────────────────────
+  // HEAD-probe each artifact once the job is done. Cancelling resets
+  // everything to "false" so the UI hides links / buttons that would
+  // 404. Doesn't run while the job is running — we don't want to spam
+  // the server with HEAD requests per frame.
+  useEffect(() => {
+    if (!client || !jobId) {
+      setArtifacts({ segmentsJson: false, viz: false, clips: false });
+      return;
+    }
+    if (jobState !== 'done') {
+      // If the job failed/was cancelled and never wrote some files,
+      // hide those links too.
+      setArtifacts({ segmentsJson: false, viz: false, clips: false });
+      return;
+    }
+    let cancelled = false;
+    const headOk = async (rel: string): Promise<boolean> => {
+      try {
+        const r = await fetch(client.artifactUrl(jobId, rel), { method: 'HEAD' });
+        return r.ok;
+      } catch {
+        return false;
+      }
+    };
+    (async () => {
+      try {
+        const [segmentsJson, viz, clips] = await Promise.all([
+          headOk('segments.json'),
+          headOk('viz.mp4'),
+          client.listClips(jobId).then((cs) => Array.isArray(cs) && cs.length > 0).catch(() => false),
+        ]);
+        if (!cancelled) setArtifacts({ segmentsJson, viz, clips });
+      } catch {
+        if (!cancelled) setArtifacts({ segmentsJson: false, viz: false, clips: false });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [client, jobId, jobState]);
+
   const handleSelectClip = (c: ClipInfo) => {
     if (!c) return;
+    setVizMode(false); // exit viz mode when picking a clip
     setActiveClip(c);
     if (!c.playable) {
       const seg = segments.find((s) => s.seg_id === c.seg_id);
@@ -214,14 +343,107 @@ export default function App() {
 
   const handleClearLog = () => setLogLines([]);
 
+  // Zip the active job's outputs into a single file the user can pass
+  // around. IPC goes to the main process which uses archiver to walk
+  // the job directory.
+  const handleExportPackage = async () => {
+    if (!jobId) {
+      setError('没有可导出的 job');
+      return;
+    }
+    if (!window.api?.exportPackage) {
+      setError('当前环境不支持导出（preload 没暴露 exportPackage）');
+      return;
+    }
+    try {
+      const res = await window.api.exportPackage(jobId);
+      if (res.ok) {
+        pushLog(`📦 已导出 job 包: ${res.path}`);
+        setError(null);
+      } else {
+        if (res.error !== 'cancelled') setError(`导出失败: ${res.error}`);
+      }
+    } catch (e: any) {
+      setError(`导出失败: ${e}`);
+    }
+  };
+
+  // Drag-and-drop video onto the window. Accept only one file at a time;
+  // reject anything that doesn't look like a video by extension.
+  const handleDroppedFile = (file: File) => {
+    let p = '';
+    try {
+      p = window.api?.getDroppedFilePath?.(file) ?? '';
+    } catch {
+      p = '';
+    }
+    if (!p) {
+      setError('无法获取拖入文件的绝对路径 —— 请改用「选择视频…」按钮');
+      return;
+    }
+    if (!isVideoPath(p)) {
+      const ext = (p.match(/\.([a-z0-9]+)$/i)?.[1] ?? '?').toLowerCase();
+      setError(`不是视频文件（.${ext})。请拖入 ${VIDEO_EXTS.map((e) => '.' + e).join(' / ')} 格式的视频。`);
+      return;
+    }
+    setError(null);
+    setVideoPath(p);
+    pushLog(`📂 拖入视频: ${p}`);
+  };
+
+  // Drag events on the outer grid. We use a counter to ignore dragleave
+  // events that fire when the cursor moves over child elements.
+  const onDragEnter = (e: React.DragEvent) => {
+    if (!Array.from(e.dataTransfer.types).includes('Files')) return;
+    e.preventDefault();
+    dropCounter.current += 1;
+    setDropActive(true);
+  };
+  const onDragOver = (e: React.DragEvent) => {
+    if (!Array.from(e.dataTransfer.types).includes('Files')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  };
+  const onDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    dropCounter.current = Math.max(0, dropCounter.current - 1);
+    if (dropCounter.current === 0) setDropActive(false);
+  };
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    dropCounter.current = 0;
+    setDropActive(false);
+    const files = Array.from(e.dataTransfer.files ?? []);
+    if (files.length === 0) {
+      setError('没有收到文件');
+      return;
+    }
+    if (files.length > 1) {
+      setError('一次只能拖一个视频文件');
+      return;
+    }
+    handleDroppedFile(files[0]);
+  };
+
   if (!baseUrl) return <div style={{ padding: 24 }}>⏳ 等待 sidecar 服务启动…</div>;
 
   const clipSegment = activeClip
     ? segments.find((s) => s.seg_id === activeClip.seg_id) ?? null
     : null;
-  const clipUrl = activeClip && client && jobId
+  // Priority for video src:
+  //   1. vizMode on → viz.mp4
+  //   2. active clip → clip stream (if playable) else original
+  //   3. selectedSeg / no active → original video
+  let videoSrc: string | null = null;
+  if (vizMode && client && jobId) {
+    videoSrc = client.artifactUrl(jobId, 'viz.mp4');
+  } else if (activeClip && client && jobId) {
+    videoSrc = activeClip.playable
     ? client.clipStreamUrl(jobId, activeClip.seg_id)
-    : null;
+    : client.videoUrl(videoPath ?? '');
+  } else if (videoPath && client) {
+    videoSrc = client.videoUrl(videoPath);
+  }
   const thumbUrl = (segId: number) =>
     client && jobId ? client.clipThumbUrl(jobId, segId) : '';
 
@@ -232,12 +454,35 @@ export default function App() {
         gridTemplateColumns: '1fr 360px',
         height: '100vh',
         fontFamily: 'system-ui',
-        color: '#eee',
-        background: '#1a1a1a',
+        color: 'var(--text)',
+        background: 'var(--bg)',
       }}
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
     >
-      {/* Left column — order: title → video → progress → clips (pinned).
-          Video takes the scrollable middle; progress + clips always visible. */}
+      {dropActive && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(255,235,59,0.18)',
+            border: '4px dashed var(--accent)',
+            zIndex: 9999,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            pointerEvents: 'none',
+            color: 'var(--accent)',
+            fontSize: 22,
+            fontWeight: 'bold',
+          }}
+        >
+          拖入视频文件即可载入
+        </div>
+      )}
+      {/* Left column — title → video → progress → clips (pinned) */}
       <div
         style={{
           display: 'grid',
@@ -247,8 +492,54 @@ export default function App() {
           minHeight: 0,
         }}
       >
-        <h2 style={{ margin: 0 }}>🎾 swing-analysis</h2>
-        <div style={{ overflow: 'auto', minHeight: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <h2 style={{ margin: 0 }}>🎾 swing-analysis</h2>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <button
+              onClick={() => setHelpOpen(true)}
+              title="帮助 / 参数说明"
+              style={{
+                background: 'var(--bg-elev)',
+                color: 'var(--text)',
+                border: '1px solid var(--border)',
+                borderRadius: '50%',
+                width: 26, height: 26,
+                cursor: 'pointer',
+                fontSize: 14, fontWeight: 'bold',
+                lineHeight: 1, padding: 0,
+              }}
+            >
+              ?
+            </button>
+            <button
+              onClick={toggle}
+              title={theme === 'dark' ? '当前：深色模式（点击切换到浅色）' : '当前：浅色模式（点击切换到深色）'}
+              style={{
+                background: 'var(--bg-elev)',
+                color: 'var(--text)',
+                border: '1px solid var(--border)',
+                borderRadius: 4,
+                padding: '4px 10px',
+                cursor: 'pointer',
+                fontSize: 16,
+                lineHeight: 1,
+              }}
+            >
+              {theme === 'dark' ? '🌙' : '☀️'}
+            </button>
+          </div>
+        </div>
+        <div style={{
+          // Flex column that hosts the VideoPicker (which itself is a flex
+          // column with the video area on flex:1). No overflow on this
+          // wrapper — the VideoPicker / video element handle their own
+          // sizing, and overflow:hidden would silently clip the controls
+          // bar if the available space is tight.
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: 0,
+          overflow: 'hidden',
+        }}>
           <VideoPicker
             videoPath={videoPath}
             onPick={async () => {
@@ -258,11 +549,12 @@ export default function App() {
             client={client}
             selectedSeg={selectedSeg}
             activeClip={activeClip}
-            clipUrl={clipUrl}
             clipSegment={clipSegment}
             onReturnToOriginal={handleReturnToOriginal}
+            vizMode={vizMode}
+            videoSrc={videoSrc}
           />
-          {error && <div style={{ color: '#f88', marginTop: 8 }}>❌ {error}</div>}
+          {error && <div style={{ color: 'var(--danger)', marginTop: 8, fontSize: 12, flex: '0 0 auto' }}>❌ {error}</div>}
         </div>
         <ProgressPanel
           state={jobState}
@@ -272,9 +564,6 @@ export default function App() {
           onCancel={cancelJob}
           disabled={!videoPath || jobState === 'running'}
         />
-        {/* Clips bar — always pinned at the bottom of the left column.
-            Wraps to multiple rows so it uses the full left-column width
-            instead of squeezing the event log column. */}
         <ClipsBar
           clips={clips}
           segments={segments}
@@ -284,16 +573,18 @@ export default function App() {
           thumbUrl={thumbUrl}
           jobDone={jobState === 'done' || jobState === 'failed' || jobState === 'cancelled'}
           saveClipsEnabled={params.save_clips}
+          jobRunning={jobState === 'running' || jobState === 'queued'}
         />
       </div>
 
       {/* Right column */}
       <div
         style={{
-          borderLeft: '1px solid #333',
+          borderLeft: '1px solid var(--border)',
           display: 'flex',
           flexDirection: 'column',
           minHeight: 0,
+          background: 'var(--bg)',
         }}
       >
         <ParamsForm params={params} onChange={setParams} disabled={jobState === 'running'} />
@@ -302,8 +593,18 @@ export default function App() {
           jobId={jobId}
           logLines={logLines}
           onClearLog={handleClearLog}
+          onDeleteJob={deleteJob}
+          onExportPackage={handleExportPackage}
+          vizMode={vizMode}
+          onToggleViz={() => setVizMode((v) => !v)}
+          vizAvailable={artifacts.viz}
+          segmentsJsonAvailable={artifacts.segmentsJson}
+          clipsAvailable={artifacts.clips}
         />
       </div>
+
+      {/* Help overlay — sits above everything */}
+      {helpOpen && <HelpPanel onClose={() => setHelpOpen(false)} />}
     </div>
   );
 }

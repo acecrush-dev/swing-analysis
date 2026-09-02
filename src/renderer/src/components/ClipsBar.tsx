@@ -11,6 +11,9 @@ interface Props {
   thumbUrl: (segId: number) => string;
   jobDone: boolean;
   saveClipsEnabled: boolean;
+  // Disables the cleanup button while a segmentation job is running
+  // (the API would 409 anyway, but greying out the UI is friendlier).
+  jobRunning?: boolean;
 }
 
 type DockMode = 'docked' | 'floating';
@@ -33,6 +36,7 @@ export function ClipsBar({
   thumbUrl,
   jobDone,
   saveClipsEnabled,
+  jobRunning,
 }: Props) {
   const [mode, setMode] = useState<DockMode>('docked');
   const [pos, setPos] = useState<{ x: number; y: number }>({ x: 24, y: 24 });
@@ -53,11 +57,17 @@ export function ClipsBar({
   };
 
   const bodyStyle: React.CSSProperties = {
-    background: '#161616',
+    background: 'var(--bg-alt)',
+    color: 'var(--text)',
     padding: '8px 12px 10px 12px',
-    borderTop: '1px solid #333',
+    borderTop: '1px solid var(--border)',
     borderRadius: mode === 'floating' ? 8 : 0,
-    boxShadow: mode === 'floating' ? '0 8px 24px rgba(0,0,0,0.5)' : 'none',
+    boxShadow: mode === 'floating' ? '0 8px 24px var(--shadow)' : 'none',
+    // Cap the docked bar height — when cards wrap to many rows the
+    // inner overflow:auto grows a vertical scrollbar instead of
+    // pushing up the video area.
+    maxHeight: 280,
+    overflowY: 'auto',
   };
 
   const headerActions = (
@@ -65,17 +75,19 @@ export function ClipsBar({
       {hasClips && (
         <button
           onClick={(e) => { e.stopPropagation(); onCleanupClips(); }}
+          disabled={!!jobRunning}
+          title={jobRunning ? '切分进行中，clips 还在生成 —— 不能清理' : '删除该 job 的全部 clips'}
           style={{
-            background: '#532',
-            color: '#fff',
-            border: '1px solid #a44',
+            background: jobRunning ? 'var(--bg-elev)' : 'var(--danger-bg)',
+            color: jobRunning ? 'var(--text-dim)' : 'var(--danger)',
+            border: '1px solid ' + (jobRunning ? 'var(--border)' : 'var(--danger-border)'),
             borderRadius: 3,
             padding: '2px 8px',
-            cursor: 'pointer',
+            cursor: jobRunning ? 'not-allowed' : 'pointer',
             fontSize: 11,
             marginRight: 6,
+            opacity: jobRunning ? 0.5 : 1,
           }}
-          title="删除该 job 的全部 clips"
         >
           🧹 清理
         </button>
@@ -132,9 +144,10 @@ export function ClipsBar({
         opacity: 0.6,
         fontSize: 11,
         padding: '12px 8px',
-        border: '1px dashed #444',
+        border: '1px dashed var(--border)',
         borderRadius: 4,
         textAlign: 'center',
+        color: 'var(--text-muted)',
       }}
     >
       {jobDone

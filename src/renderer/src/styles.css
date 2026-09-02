@@ -1,0 +1,80 @@
+/* Global resets + theme-aware defaults for the renderer.
+ *
+ * Goals:
+ *  - No white borders in dark mode: UA default form-element styling
+ *    (button/input/select/textarea) ships with light-grey 3D-looking
+ *    borders that look broken on dark backgrounds. Override them all
+ *    so they pick up var(--*) from the ThemeProvider.
+ *  - No outer vertical scrollbar: lock html, body, # root overflow.
+ *  - Scrollbars styled to match the theme (default UA scrollbars are
+ *    blue/grey and clash with both dark and light palettes).
+ */
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* All form elements inherit our palette — no more UA white borders. */
+button, input, select, textarea {
+  background: var(--bg-elev);
+  color: var(--text);
+  border: 1px solid var(--border);
+  outline: none;
+  font-family: inherit;
+}
+button {
+  cursor: pointer;
+}
+button:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent);
+}
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* <a> defaults — links inherit var(--link), no underline by default
+   (the inline styles in components add/override as needed). */
+a {
+  color: var(--link);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+/* WebKit scrollbars (Electron is Chromium → this matters) */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
