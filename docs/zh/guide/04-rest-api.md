@@ -3,6 +3,9 @@
 服务默认绑 `127.0.0.1:8321`。所有端点都是 JSON 或 WebSocket,只有
 `/api/videos` 走字节流。
 
+本服务支撑着大品牌 `AceCrush` 旗下 `Swing-Analysis` 桌面 app 的后端。
+REST 契约本身与品牌无关 —— 任何 HTTP 客户端都可以消费。
+
 ## CORS
 
 任何 `http://localhost:*` 或 `http://127.0.0.1:*` origin (任意端口) 都

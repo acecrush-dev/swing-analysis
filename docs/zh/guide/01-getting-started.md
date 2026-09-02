@@ -125,6 +125,22 @@ Electron 自动 spawn Python sidecar (期望 PATH 上有 `python3` 或
 `backend/.venv/bin/python3`)。如果你的 venv 起了别的名字,改
 `src/main/index.ts` 的 `candidates` 数组。
 
+窗口标题是 **`Swing-Analysis`**,挂在大品牌 **`AceCrush`** 旗下(macOS 顶
+栏 app 菜单槽挂 `AceCrush`、Dock 图标是 AceCrush 网球 logo)。Clips 条
+(`↗`) 和 Event Log(`↗`) 可弹出为独立 OS 窗口;按 `?` 看参数说明;头部
+的 `⚙ Settings` 配置任务输出目录和四个标注颜色
+(RTMDet bbox / pose-left / pose-right / pose-body)。
+
+需要正式出包时:
+
+```bash
+npm run pack:mac    # macOS .dmg + .zip (要在 macOS 上跑)
+npm run pack:win    # Windows NSIS .exe (要在 Windows 上跑)
+npm run pack:linux  # Linux AppImage + .deb (要在 Linux 上跑)
+```
+
+跨平台矩阵与代码签名 / 公证见 [08 · Build & Package](08-build-package.md)。
+
 ## 产物都去哪了?
 
 | 路径 | 内容 |
@@ -133,9 +149,12 @@ Electron 自动 spawn Python sidecar (期望 PATH 上有 `python3` 或
 | `backend/data/jobs/<id>/segments.json` | 最终结果 + 完整参数回显 |
 | `backend/data/jobs/<id>/clips/clip_NNN.mp4` | 每段 clip (仅当 `save_clips=true`) |
 | `backend/data/jobs/<id>/viz.mp4` | 彩色相位标注视频 (仅当 `viz_video=true`) |
+| `~/Library/Application Support/AceCrush Swing-Analysis/backend-data/jobs/<id>/...` | 打包后:macOS 同上,Linux `~/.config/AceCrush Swing-Analysis/...`,Windows `%APPDATA%/AceCrush Swing-Analysis/...` |
 | `/tmp/swing_out/` | CLI `--out-dir` 指定的位置 |
 
-这些都进 `.gitignore`。它们是运行时缓存,重跑就会重建。
+dev 路径 (`backend/data/...`) 进 `.gitignore`,是运行时缓存,重跑就
+会重建;打包后的 `userData` 走 OS 的清理策略,卸载 app 时连同设置一
+起清掉。
 
 ## 接下来
 

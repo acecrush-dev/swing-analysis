@@ -62,8 +62,21 @@ export function saveSettings(s: AppSettings): boolean {
   }
 }
 
-/** Built-in jobs root — matches the pre-settings hardcoded behaviour. */
+/** Built-in jobs root — dev: <repoRoot>/backend/data; packaged: <userData>/backend-data.
+ *
+ * In packaged builds `__dirname` lives inside app.asar so `<repoRoot>`
+ * points at a path that doesn't exist on disk. We pivot to
+ * `app.getPath('userData')` which Electron resolves to a per-OS, per-user
+ * writable directory keyed off the package's `productName` ("AceCrush
+ * Swing-Analysis") → macOS `~/Library/Application Support/AceCrush
+ * Swing-Analysis/`, Linux `~/.config/AceCrush Swing-Analysis/`, Windows
+ * `%APPDATA%/AceCrush Swing-Analysis/`. The user can still override via
+ * the Settings panel.
+ */
 export function defaultDataDir(): string {
+  if (app.isPackaged) {
+    return join(app.getPath('userData'), 'backend-data');
+  }
   const repoRoot = join(__dirname, '..', '..');
   return join(repoRoot, 'backend', 'data');
 }

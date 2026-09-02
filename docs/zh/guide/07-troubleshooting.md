@@ -75,6 +75,38 @@ python3 -m backend.service --port 0
 
 Electron 作客户端时,自动解析那行 stdout —— 你不用在哪儿硬编码 8321。
 
+## 打包后的 app: sidecar 启动不了
+
+打包后的 app (`AceCrush Swing-Analysis.app` / `.exe` / `.AppImage`)
+期望拉起 `<resources>/backend/swing-backend(.exe)` —— PyInstaller 打的
+单文件二进制。启不了就:
+
+1. **确认 binary 在。** 解包 release,看 `resources/backend/swing-backend`
+   (mac/linux) 或 `resources/backend/swing-backend.exe` (windows) 在不
+   在。少了八成是 `npm run bundle:py` 跑在 `electron-builder` 之前漏了
+2. **检查 `--models-dir`。** 打包后会传 `--models-dir <resources>/models`。
+   这目录空了说明 `bash scripts/fetch-model.sh`(用 `git lfs pull` 把
+   ONNX 真文件拉回 `backend/models/`)没在 `electron-builder` 前跑
+3. **macOS Gatekeeper。** 第一次打开未签名 / 未公证的 `.app` 会出"未识
+   别开发者"提示。右键 → 打开(只需要一次),或
+   `xattr -dr com.apple.quarantine /Applications/AceCrush\ Swing-Analysis.app`。
+   真正的解法是公证,见 [08 · Build & Package](08-build-package.md)
+4. **Linux AppImage。** 首跑要 `chmod +x AceCrush-Swing-Analysis-*.AppImage`。
+   沙箱里没 `/dev/fuse` 时 FUSE 抽 zip 会失败 —— 用 `--appimage-extract-and-run`
+   一次
+
+## 打包后的 app: 数据落在哪?
+
+打包后的 app 把任务写到 `<userData>/backend-data/`:
+
+- macOS: `~/Library/Application Support/AceCrush Swing-Analysis/backend-data/`
+- Linux: `~/.config/AceCrush Swing-Analysis/backend-data/`
+- Windows: `%APPDATA%/AceCrush Swing-Analysis/backend-data/`
+
+重装 / 清理 `userData` 不会把已有任务带过去 —— 它们会随装机重生。
+想跨重装保留任务,把 `Settings → Jobs output directory` 指到一个稳定
+的路径,再清 `userData`。
+
 ## `onnxruntime` 没装
 
 Clip 标注 (RTMDet + RTMPose) 依赖 `onnxruntime`。**基础 segmentation**

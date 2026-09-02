@@ -1,4 +1,4 @@
-# swing-analysis
+# AceCrush Swing-Analysis
 
 [![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://leochan007.github.io/swing-analysis/)
 [![Docs (中文)](https://img.shields.io/badge/docs-%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-red)](https://leochan007.github.io/swing-analysis/zh/)

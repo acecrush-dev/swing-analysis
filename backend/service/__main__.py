@@ -20,7 +20,7 @@ from .jobs import JobManager
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="swing-analysis 后台服务")
+    parser = argparse.ArgumentParser(description="Swing-Analysis 后台服务")
     parser.add_argument("--host", default="127.0.0.1", help="监听地址 (默认 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8321, help="监听端口 (默认 8321；0 = 随机)")
     parser.add_argument(

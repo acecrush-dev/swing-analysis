@@ -3,6 +3,28 @@ import { useI18n } from '../i18n';
 
 interface Props { onClose: () => void; }
 
+// Stable order of rows in the help table. Each ID maps to three
+// i18n keys under `help.params.<id>.{name,meaning,advice}`. Adding a
+// new parameter: append the ID here + three new strings in BOTH `en`
+// and `zh` in i18n.ts; the table re-renders automatically.
+const PARAM_ROW_IDS = [
+  'v_swing',
+  'gap_merge',
+  'max_bridge',
+  'min_peak',
+  'smooth_alpha',
+  'max_lost_frames',
+  'min_dur_max_dur',
+  'buf_before_buf_after',
+  'skip',
+  'max_frames',
+  'save_clips',
+  'viz_video',
+  'clip_bbox',
+  'clip_skel',
+  'skel_backend',
+] as const;
+
 /**
  * Help panel — overlaid modal showing parameter explanations, drag-
  * and-drop usage, menu map, and quick links to docs / GitHub. Closes
@@ -15,6 +37,12 @@ export function HelpPanel({ onClose }: Props) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  const paramRows: [string, string, string][] = PARAM_ROW_IDS.map((id) => [
+    t(`help.params.${id}.name`),
+    t(`help.params.${id}.meaning`),
+    t(`help.params.${id}.advice`),
+  ]);
 
   return (
     <div
@@ -70,23 +98,10 @@ export function HelpPanel({ onClose }: Props) {
             </Section>
 
             <Section title={t('help.section.params')}>
-              <ParamTable rows={[
-                ['v_swing', 'Cut threshold (wrist speed)', 'Higher = looser; lower = more fragments'],
-                ['gap_merge', 'Merge gap (s) between adjacent swings', 'Two segments < this apart merge'],
-                ['max_bridge', 'Bridge upper bound (s)', 'A break longer than this starts a new segment'],
-                ['min_peak', 'Min peak height', 'Peaks below this are not counted as swings'],
-                ['smooth_alpha', 'EMA smoothing', 'Higher = tighter follow; lower = more lag'],
-                ['max_lost_frames', 'Lost-frame tolerance', 'Bridges wrist losses ≤ this many frames'],
-                ['min_dur / max_dur', 'Segment duration bounds', 'Out-of-range segments are dropped / merged'],
-                ['buf_before / buf_after', 'Pre/post buffer (s)', 'Clip start/end extend by this much'],
-                ['skip', 'Sampling step', 'Run pose detection every N frames'],
-                ['max_frames', 'Max frames', '0 = all; >0 = only first N'],
-                ['save_clips', 'Save per-segment clip mp4', 'Required for the clips bar'],
-                ['viz_video', 'Render whole viz.mp4', 'Required for «Play viz.mp4»'],
-                ['clip_bbox', 'Overlay RTMDet bbox on clips', 'Needs save_clips too'],
-                ['clip_skel', 'Overlay skeleton on clips', 'Needs save_clips too'],
-                ['skel_backend', 'Skeleton backend', 'rtmpose (fast / COCO-13) or mediapipe (precise / 33 pts)'],
-              ]} />
+              <ParamTable rows={paramRows}
+                          colName={t('help.params.col.name')}
+                          colMeaning={t('help.params.col.meaning')}
+                          colAdvice={t('help.params.col.advice')} />
             </Section>
 
             <Section title={t('help.section.menu')}>
@@ -125,14 +140,17 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function ParamTable({ rows }: { rows: [string, string, string][] }) {
+function ParamTable({ rows, colName, colMeaning, colAdvice }: {
+  rows: [string, string, string][];
+  colName: string; colMeaning: string; colAdvice: string;
+}) {
   return (
     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, marginTop: 4 }}>
       <thead>
         <tr style={{ borderBottom: '1px solid var(--border)' }}>
-          <th style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-muted)' }}>Name</th>
-          <th style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-muted)' }}>Meaning</th>
-          <th style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-muted)' }}>Advice</th>
+          <th style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-muted)' }}>{colName}</th>
+          <th style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-muted)' }}>{colMeaning}</th>
+          <th style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-muted)' }}>{colAdvice}</th>
         </tr>
       </thead>
       <tbody>

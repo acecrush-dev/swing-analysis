@@ -8,6 +8,10 @@ backend.cli
 └── annotate  对已有 clip_*.mp4 跑 RTMDet / 骨架标注 (后处理)
 ```
 
+`Swing-Analysis` 是这款 app;`AceCrush` 是本 CLI 所属的大品牌。CLI
+本身不带品牌字样,只跟视频打交道。UI 上的品牌分层约定见
+[05 · Electron GUI](05-electron-gui.md#品牌分层约定)。
+
 `segment` 子命令驱动切分流水线;`annotate` 是独立的 clip 增强步骤 (跟
 `--clip-bbox` / `--clip-skel` 触发的是同一段逻辑)。
 

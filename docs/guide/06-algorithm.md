@@ -5,6 +5,8 @@ does, *why* v2 exists at all, and *which* parameters matter most for
 tuning. The implementation in `backend/core/segment_swing.py` is the
 source of truth — read it for the line-level details.
 
+This algorithm is the heart of **`Swing-Analysis`** (`AceCrush` brand).
+
 ## Why v2?
 
 v1 had three concrete bugs on real footage (`fdl.mp4`, ~9.4 minutes):

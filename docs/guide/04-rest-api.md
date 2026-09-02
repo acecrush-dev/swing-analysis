@@ -3,6 +3,10 @@
 The service binds to `127.0.0.1:8321` by default. All endpoints are JSON or
 WebSocket, except `/api/videos` which streams bytes.
 
+This service backs the **`Swing-Analysis`** desktop app under the
+**`AceCrush`** brand. The REST contract itself is brand-neutral — any
+HTTP client can consume it.
+
 ## CORS
 
 Any `http://localhost:*` or `http://127.0.0.1:*` origin is allowed (any port).

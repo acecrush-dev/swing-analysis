@@ -134,6 +134,25 @@ The Electron app auto-spawns the Python sidecar (it expects `python3` on
 PATH or `backend/.venv/bin/python3`). If you used a venv with a different
 name, edit `src/main/index.ts`'s `candidates` array.
 
+The window is titled **`Swing-Analysis`** and lives under the **`AceCrush`**
+brand (parent). The macOS top-bar app-menu slot is `AceCrush`; the Dock
+icon is the AceCrush tennis-ball logo. Detach the clips list (`↗`) or
+the event log (`↗`) into independent OS windows; press `?` for the
+parameter reference; open `⚙ Settings` from the header to configure
+the jobs output directory and the four annotation colours
+(RTMDet bbox / pose-left / pose-right / pose-body).
+
+For fullscreen release builds:
+
+```bash
+npm run pack:mac    # macOS .dmg + .zip (needs to run on macOS)
+npm run pack:win    # Windows NSIS .exe (needs to run on Windows)
+npm run pack:linux  # Linux AppImage + .deb (needs to run on Linux)
+```
+
+See [08 · Build & Package](08-build-package.md) for the cross-platform
+build matrix and code-signing / notarization notes.
+
 ## Where do things end up?
 
 | Path | What's in it |

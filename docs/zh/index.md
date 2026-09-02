@@ -1,10 +1,10 @@
-# 📚 swing-analysis 文档
+# 📚 Swing-Analysis 文档
 
 [English](../) | **简体中文**
 
 ## 这是什么?
 
-`swing-analysis` 把已经实测验证的网球挥拍自动切分管线包装成可服务化
+`Swing-Analysis` 把已经实测验证的网球挥拍自动切分管线包装成可服务化
 的 Python 后端,UI 层完全可插拔。三个算法脚本 **byte-for-byte 原样拷
 贝** 到 `backend/core/` —— 不修改、不留惊喜。底层源更新时,直接 `cp`
 进来就行。

@@ -38,12 +38,20 @@ backend/data/                    # service.json, jobs/<id>/segments.json etc.
 # No exception rule needed: LFS-tracked files are stored as pointers in git
 # but the real binary is downloaded on `git lfs checkout`.
 backend/cli_jobs/                # if CLI --out-dir points here
+backend/dist/                    # PyInstaller one-file build output (see scripts/build-python-bundle.js)
 __pycache__/
 *.pyc
 *.pyo
 *.egg-info/
 *.egg
+# The build/ tree mixes checked-in artefacts (icon.ico, icon.icns, icon.png,
+# entitlements.mac.plist) with regenerated intermediates (mac-icon.iconset,
+# win-icon.ico) and electron-builder output. Keep only the final assets.
 build/
+!build/icon.png
+!build/icon.ico
+!build/icon.icns
+!build/entitlements.mac.plist
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

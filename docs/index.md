@@ -1,10 +1,10 @@
-# 📚 swing-analysis Documentation
+# 📚 Swing-Analysis Documentation
 
 **English** | [简体中文](zh/)
 
 ## What is this?
 
-`swing-analysis` wraps a battle-tested tennis-swing auto-segmentation pipeline
+`Swing-Analysis` wraps a battle-tested tennis-swing auto-segmentation pipeline
 into a serviceable Python backend with a pluggable UI layer. Three algorithm
 scripts are **vendored byte-for-byte** into `backend/core/` — no
 modifications, no surprises. When the underlying source improves, you

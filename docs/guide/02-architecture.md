@@ -6,8 +6,11 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │  L4 · UI                                                        │
 │      • Electron renderer (React, /src/renderer)                 │
+│        · Brand: AceCrush (parent) / Swing-Analysis (this app)   │
+│        · Main window + detachable Clips panel + detachable      │
+│          Event Log panel + Settings overlay                     │
 │      • CLI sub-commands:  segment  /  annotate                  │
-│      • (Phase C) Browser, mobile, anything that speaks HTTP     │
+│      • Browser / mobile / anything that speaks HTTP (open API)  │
 └──────────────────────────────┬──────────────────────────────────┘
                                │  calls into L3
 ┌──────────────────────────────▼──────────────────────────────────┐
@@ -25,15 +28,18 @@
 │          ├── rtmpose.py     ONNX RTMPose COCO-13 estimator        │
 │          ├── mediapipe.py   MediaPipe 33-point estimator          │
 │          ├── drawing.py     bbox / skeleton overlay (cv2 only)    │
-│          └── annotate.py    ClipAnnotator (bbox + skel on a clip) │
+│          ├── annotate.py    ClipAnnotator (bbox + skel on a clip) │
+│          └── clip_codec.py  ffmpeg H.264 transcode for GUI       │
 └──────────────────────────────┬──────────────────────────────────┘
                                │  imports from L1 (no edits)
 ┌──────────────────────────────▼──────────────────────────────────┐
 │  L1 · Algorithm  (the truth)                                    │
 │      • backend/core/segment_swing.py  (vendored, byte-for-byte) │
-│      • MediaPipe task model (5.5 MB, committed)                 │
-│      • RTMDet ONNX (104 MB, committed)                          │
-│      • RTMPose ONNX (52 MB, committed)                          │
+│      • backend/core/analyze_swing.py  (MediaPipe 33-point path)  │
+│      • backend/core/gen_skeleton_anim.py (RTMDet+RTMPose compositor) │
+│      • MediaPipe task model (5.5 MB, Git LFS)                   │
+│      • RTMDet ONNX (104 MB, Git LFS)                            │
+│      • RTMPose ONNX (52 MB, Git LFS)                            │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -43,6 +49,10 @@ The algorithm is never imported by anything except the pipeline.
 **Each pose-runner module is pure** — no I/O, no orchestration. The pipeline
 layer (`pipeline.py`) composes them based on user flags; the CLI `annotate`
 sub-command composes them standalone.
+
+**Layout rule.** `backend/core/*` is byte-for-byte vendored from the upstream
+lab. `backend/service/*` is our transport + composition layer; the cut lives
+between L2 and L1, never crossed outward.
 
 ## What lives in each layer
 
@@ -63,7 +73,7 @@ hand-merging.
 
 Models committed to the repo:
 
-- `pose_landmarker_lite.task` (5.5 MB) — MediaPipe Pose model.
+- `pose_landmaker_lite.task` (5.5 MB) — MediaPipe Pose model.
 - `rtmdet-m-487628.onnx` (104 MB) — RTMDet person detector.
 - `rtmpose-m-27c0e6.onnx` (52 MB) — RTMPose COCO-13 estimator.
 
@@ -81,6 +91,7 @@ run_pipeline(
     on_segment: Optional[Callable[[Dict], None]] = None,
     on_clip_annotated: Optional[Callable[[Dict], None]] = None,
     should_cancel: Optional[Callable[[], bool]] = None,
+    on_clip_progress: Optional[Callable[[Dict], None]] = None,
 ) -> Dict
 ```
 
@@ -90,7 +101,9 @@ It reproduces the Pass 1 + Pass 1.5 + Pass 2 control flow from
 `on_segment` callback. If `params["clip_bbox"]` or `params["clip_skel"]` is
 set, each extracted clip is post-processed by `ClipAnnotator` (L2
 pose-runners module) which uses RTMDet and/or RTMPose/MediaPipe to overlay
-bbox + skeleton. Returns the full `segments.json` payload as a dict.
+bbox + skeleton. `on_clip_progress` fires every 5 frames during per-clip
+annotation so the GUI can render the dual progress bar.
+Returns the full `segments.json` payload as a dict.
 
 ### L2 — pose-runners (`backend/service/pose_runners/`)
 
@@ -103,6 +116,7 @@ Each module does one thing; pipeline / `annotate` CLI compose them.
 | `mediapipe.py` | `MediaPipePoseRunner` | BGR frame + ts_ms | `List[(x,y,conf)]` (33 keypoints) |
 | `drawing.py` | `draw_bboxes` / `draw_skeleton_coco13` / `draw_skeleton_mp33` | canvas + payload | mutated canvas |
 | `annotate.py` | `ClipAnnotator` | clip mp4 + flags | annotated mp4 |
+| `clip_codec.py` | `find_ffmpeg` + `transcode_h264` | mp4v mp4 + (opt) bbox/skel flags | H.264 sibling mp4 + lazy thumb |
 
 Composition happens in:
 - `pipeline.run_pipeline()` — chains `extract_one_clip` → `ClipAnnotator.annotate_clip` when `clip_bbox` or `clip_skel` is set.
@@ -111,7 +125,7 @@ Composition happens in:
 ### L3 — Service / Transport (`backend/service/`)
 
 - `app.py` — FastAPI factory; CORS for any localhost port; routes for
-  health / jobs / events / videos / artifacts.
+  health / jobs / events / videos / artifacts / clips.
 - `jobs.py` — `JobManager` keeps an in-memory registry of `_JobRecord`s.
   A `ThreadPoolExecutor(max_workers=1)` enforces single-job concurrency
   (MediaPipe VIDEO mode is stateful and CPU-bound). Each job has an event
@@ -122,13 +136,29 @@ Composition happens in:
   stdout so Electron can discover the bound port; writes `service.json`
   as a fallback.
 
+`__main__.py` flags:
+
+| Flag | Default | Notes |
+| --- | --- | --- |
+| `--host` | `127.0.0.1` | bind address |
+| `--port` | `8321` | bind port (`0` lets uvicorn pick) |
+| `--models-dir` | `<repo>/backend/models` | MediaPipe / ONNX models directory |
+| `--data-dir` | `<repo>/backend/data` (dev) / `<userData>/backend-data` (packaged) | jobs root |
+| `--log-level` | `info` | uvicorn log level |
+
 ### L4 — UI
 
 - **CLI** (`backend/cli.py`) — argparse with defaults from `DEFAULT_PARAMS`,
   stdout progress line printer, real-time segment echo, SIGINT handler that
-  flips a cancellation flag.
-- **Electron** — see [05 · Electron GUI](05-electron-gui.md) for the
-  sidecar lifecycle and renderer components.
+  flips a cancellation flag. Two sub-commands: `segment` and `annotate`.
+- **Electron** (this app — `AceCrush Swing-Analysis`) — see
+  [05 · Electron GUI](05-electron-gui.md) for the full component map,
+  sidecar lifecycle, detachable panel system, settings overlay, and brand
+  conventions. `package.json` `productName` is `AceCrush Swing-Analysis`,
+  the macOS app-menu slot carries `AceCrush` alone; `appId` is
+  `com.leochan007.acecrush.swinganalysis`. Installer builds for
+  Windows / macOS / Linux are produced by `electron-builder` (see
+  [08 · Build & Package](08-build-package.md)).
 
 ## Vendor discipline
 

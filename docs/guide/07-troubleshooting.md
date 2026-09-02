@@ -78,6 +78,43 @@ python3 -m backend.service --port 0
 If Electron is the client, it parses that stdout line automatically — you
 don't need to hard-code 8321 anywhere.
 
+## Packaged app: sidecar won't start
+
+The packaged app (`AceCrush Swing-Analysis.app` / `.exe` / `.AppImage`) is
+expected to launch `<resources>/backend/swing-backend(.exe)` — a
+PyInstaller-built single-file binary. If it doesn't start:
+
+1. **Confirm the bundle exists.** In the unpacked release, look for
+   `resources/backend/swing-backend` (mac / linux) or
+   `resources/backend/swing-backend.exe` (windows). If it's missing, you
+   forgot to run `npm run bundle:py` before `electron-builder`.
+2. **Check `--models-dir`.** The packaged app passes
+   `--models-dir <resources>/models`. If that directory is empty, run
+   `bash scripts/fetch-model.sh` (which `git lfs pull`s the ONNX files
+   into `backend/models/`) **before** `electron-builder` so they get
+   picked up by `extraResources`.
+3. **macOS Gatekeeper.** First launch of an unsigned / un-notarized
+   `.app` warns about unidentified developer. Either Right-click → Open
+   the first time, or run `xattr -dr com.apple.quarantine
+   /Applications/AceCrush\ Swing-Analysis.app`. Notarization is the
+   proper fix; see [08 · Build & Package](08-build-package.md).
+4. **Linux AppImage.** First run needs `chmod +x AceCrush-Swing-Analysis-*.AppImage`.
+   If `/dev/fuse` is unavailable in your sandbox, FUSE-based extraction
+   fails — mount with `--appimage-extract-and-run` (one-time).
+
+## Packaged app: data lives where?
+
+The packaged app writes jobs to `<userData>/backend-data/`:
+
+- macOS: `~/Library/Application Support/AceCrush Swing-Analysis/backend-data/`
+- Linux: `~/.config/AceCrush Swing-Analysis/backend-data/`
+- Windows: `%APPDATA%/AceCrush Swing-Analysis/backend-data/`
+
+Re-running an uninstalled / cleaned `userData` does **not** carry prior
+jobs over — they're regenerated per install. To keep prior jobs across
+reinstalls, point `Settings → Jobs output directory` at a stable path
+before clearing `userData`.
+
 ## `IndexError` / `KeyError` deep inside MediaPipe
 
 Usually means the `.task` file is corrupt or wrong version. Re-fetch:

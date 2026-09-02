@@ -35,7 +35,7 @@ CHUNK = 1024 * 256
 
 
 def create_app(jobs: JobManager, data_dir: Path) -> FastAPI:
-    app = FastAPI(title="swing-analysis service", version=SERVICE_VERSION)
+    app = FastAPI(title="Swing-Analysis service", version=SERVICE_VERSION)
 
     # CORS — any localhost/127.0.0.1 port so vite dev server works without fuss.
     app.add_middleware(

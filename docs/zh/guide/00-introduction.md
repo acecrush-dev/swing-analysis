@@ -5,7 +5,7 @@
 教练拍下比赛录像,想从 10 分钟视频里找出每一个正手、反手、发球,切成
 独立片段,在击球瞬间标上分析。手工做要几小时;每调一次参数重做一遍,更久。
 
-`swing-analysis` 自动化 **找 + 切** 这两步。你给它视频,可选地给一些调
+`Swing-Analysis` 自动化 **找 + 切** 这两步。你给它视频,可选地给一些调
 参;它给你一组完整挥拍周期,带相位边界 (`ready / windup / contact /
 follow_through`) 与预切好的 clip MP4。
 
@@ -41,6 +41,19 @@ follow_through`) 与预切好的 clip MP4。
 
 这种形状让 GUI 只是 CLI 之上的薄壳。Renderer 里没有算法代码。没有"我得
 维护两份实现"的债。
+
+## 品牌
+
+`Swing-Analysis` 是 `AceCrush` 品牌系列下的一款 app —— 后者面向体育
+AI 工具这条线。具体形态:
+
+- Electron 窗口标题与 `<title>` 写 `Swing-Analysis` — 这是你正在用的 app
+- macOS 顶栏 app 菜单与 Dock 图标带 `AceCrush` — 那是品牌
+- 安装器 (NSIS / DMG / AppImage / deb) 与 macOS `.app` 包叫
+  `AceCrush Swing-Analysis` — 让用户同时看到品牌 + app
+- 内部标识符(`package.json` `name`、GitHub 仓库名、GitHub Pages URL、
+  `git clone` 路径)保持小写,作稳定 ID。完整分层约定见
+  [05 · Electron GUI](05-electron-gui.md#品牌分层约定)
 
 ## 什么时候不要用它
 

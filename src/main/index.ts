@@ -25,9 +25,15 @@ interface ServiceInfo { host: string; port: number; url: string; }
 class PythonSidecar {
   private proc: ChildProcessWithoutNullStreams | null = null;
   private info: ServiceInfo | null = null;
-  private pythonBin: string;
+  private command: string;
+  private baseArgs: string[];
+  private cwd?: string;
 
-  constructor(pythonBin: string) { this.pythonBin = pythonBin; }
+  constructor(command: string, baseArgs: string[], cwd?: string) {
+    this.command = command;
+    this.baseArgs = baseArgs;
+    this.cwd = cwd;
+  }
 
   baseUrl(): string | null { return this.info?.url ?? null; }
 
@@ -38,16 +44,20 @@ class PythonSidecar {
       console.log('[sidecar] attach to', this.info.url);
       return this.info;
     }
-    const repoRoot = join(__dirname, '..', '..');
-    const args = ['-m', 'backend.service', '--port', '0',
-                  '--data-dir', activeData()];
-    console.log('[sidecar] spawning:', this.pythonBin, args.join(' '));
+    const args = [
+      ...this.baseArgs,
+      '--port', '0',
+      '--data-dir', activeData(),
+      '--models-dir', MODELS_DIR,
+    ];
+    console.log('[sidecar] spawning:', this.command, args.join(' '));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.kill();
         reject(new Error('sidecar 启动超时 (15s)'));
       }, timeoutMs);
-      this.proc = spawn(this.pythonBin, args, { cwd: repoRoot });
+      const spawnOpts = this.cwd ? { cwd: this.cwd } : {};
+      this.proc = spawn(this.command, args, spawnOpts);
       const onLine = (chunk: Buffer) => {
         const s = chunk.toString();
         for (const line of s.split(/\r?\n/)) {
@@ -89,15 +99,64 @@ class PythonSidecar {
 }
 
 const repoRoot = join(__dirname, '..', '..');
-const candidates = [
-  join(repoRoot, 'backend', '.venv', 'bin', 'python3'),
-  join(repoRoot, 'backend', '.venv', 'bin', 'python'),
-];
-const pythonBin = candidates.find(existsSync) ?? 'python3';
+
+// ── Sidecar launch strategy ────────────────────────────────────────
+// In dev: spawn the venv python with `python -m backend.service`.
+// In packaged: spawn the PyInstaller one-file bundle produced by
+// `scripts/build-python-bundle.js` and copied into resources/backend/
+// by electron-builder (see package.json → build.extraResources).
+//
+// We always pass --models-dir explicitly: in dev models live in
+// backend/models/ under the repo; in packaged they're in
+// process.resourcesPath/models/. Defaulting the CLI arg to "next to
+// __file__" works in dev (Python's __file__) but fails in the bundled
+// binary where __file__ points into the temp extraction — so we set it.
+//
+// Mac/Linux/python3 / Windows/.exe — only the dev path needs the .exe
+// search; everything else is the same Python interpreter.
+interface SidecarLaunchSpec {
+  command: string;
+  baseArgs: string[];
+  cwd?: string;
+}
+
+function pickSidecarLaunch(): SidecarLaunchSpec {
+  if (app.isPackaged) {
+    // process.resourcesPath is `${app.getAppPath()}/..` in dev and
+    // `<app>/Contents/Resources` in mac packaged apps / `<app>/resources`
+    // in win/linux. Models + the swing-backend binary land here.
+    const resBase = process.resourcesPath ?? join(repoRoot, 'release');
+    const isWin = process.platform === 'win32';
+    const exe = join(resBase, 'backend', `swing-backend${isWin ? '.exe' : ''}`);
+    return {
+      command: exe,
+      baseArgs: [],
+      cwd: undefined,
+    };
+  }
+  const candidates = [
+    join(repoRoot, 'backend', '.venv', 'bin', 'python3'),
+    join(repoRoot, 'backend', '.venv', 'bin', 'python'),
+  ];
+  const python = candidates.find(existsSync) ?? (process.platform === 'win32' ? 'python.exe' : 'python3');
+  return {
+    command: python,
+    baseArgs: ['-m', 'backend.service'],
+    cwd: repoRoot,
+  };
+}
+
+function modelsDirFor(): string {
+  if (app.isPackaged) {
+    return join(process.resourcesPath ?? '', 'models');
+  }
+  return join(repoRoot, 'backend', 'models');
+}
 
 // Jobs/output root. The Settings panel can point this anywhere
 // (userData/settings.json → `output_dir`); the built-in default is
-// <repoRoot>/backend/data. Captured ONCE here because the sidecar reads
+// <repoRoot>/backend/data in dev, <userData>/backend-data in packaged
+// (see defaultDataDir()). Captured ONCE here because the sidecar reads
 // --data-dir only at spawn — a settings change applies on next launch,
 // and the IPC handlers below must agree with where jobs actually land.
 const DATA_DIR_DEFAULT = defaultDataDir();
@@ -105,7 +164,61 @@ const CONFIGURED_DATA_DIR: string | null = loadSettings().output_dir;
 const DATA_DIR: string = CONFIGURED_DATA_DIR ?? DATA_DIR_DEFAULT;
 setActiveDataDir(DATA_DIR);
 
-const sidecar = new PythonSidecar(pythonBin);
+const SIDE_LAUNCH = pickSidecarLaunch();
+const MODELS_DIR = modelsDirFor();
+const sidecar = new PythonSidecar(SIDE_LAUNCH.command, SIDE_LAUNCH.baseArgs, SIDE_LAUNCH.cwd);
+
+// Resolve the Swing-Analysis app icon at runtime. In dev mode the icons live
+// under <repo>/build/; electron-builder copies that directory to
+// resources/build/ inside the packaged app, so production loads from
+// process.resourcesPath. macOS wants an `.icns` for the window/About and
+// a `.png` for the Dock (dock.setIcon goes through nativeImage which
+// reads PNG; .icns paths silently fail on some Electron versions).
+function appIconPath(preferPng = false): string | undefined {
+  // macOS: icns is the canonical Apple icon (window title bar, Cmd+Tab
+  // list, About dialog when no override is set). PNG is what
+  // app.dock.setIcon consumes. Default to icns for window; pass
+  // preferPng=true for the Dock path.
+  const ext = preferPng ? 'png'
+            : process.platform === 'darwin' ? 'icns'
+            : process.platform === 'win32'  ? 'ico'
+            : 'png';
+  const candidates = [
+    join(repoRoot, 'build', `icon.${ext}`),                          // dev
+    join(process.resourcesPath ?? '', 'build', `icon.${ext}`),       // packaged
+    join(repoRoot, 'build', 'icon.png'),                             // dev PNG fallback
+    join(process.resourcesPath ?? '', 'build', 'icon.png'),          // packaged PNG fallback
+  ];
+  return candidates.find(existsSync);
+}
+
+// Set the app name early so the macOS app menu (top bar) and About
+// dialog reflect the brand. AceCrush is the parent brand; Swing-Analysis
+// is this specific app — the macOS app-menu slot gets the *brand* line,
+// while the BrowserWindow title (separately wired below) stays as
+// "Swing-Analysis" so the window caption names the actual app.
+// package.json `productName` is "AceCrush Swing-Analysis" for installers.
+if (process.platform === 'darwin') app.setName('AceCrush');
+
+// macOS Dock icon — must run inside `whenReady` because `app.dock` is
+// only populated then (it's null at module-init time). BrowserWindow.icon
+// does NOT change the Dock image; that's why a fresh dev launch still
+// shows the default Electron icon even after `icon:` is wired into the
+// window constructor. Setting it explicitly covers both modes (dev +
+// packaged) — packaged builds additionally have electron-builder embed
+// icon.icns into the .app bundle via `mac.icon`, so removing this call
+// wouldn't break the packaged path, only the dev path.
+function applyDockIcon() {
+  if (process.platform !== 'darwin') return;
+  if (!app.dock || typeof app.dock.setIcon !== 'function') return;
+  const dockIcon = appIconPath(true) ?? appIconPath(); // PNG first, fall back to icns
+  if (!dockIcon) {
+    console.warn('[icon] dock icon path missing; Dock will show default Electron icon');
+    return;
+  }
+  app.dock.setIcon(dockIcon);
+  console.log('[icon] dock setIcon:', dockIcon);
+}
 
 async function createWindow() {
   let info: ServiceInfo;
@@ -120,6 +233,8 @@ async function createWindow() {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
+    icon: appIconPath(),
+    title: 'Swing-Analysis',
     webPreferences: {
       preload: join(__dirname, '..', 'preload', 'index.js'),
       contextIsolation: true,
@@ -148,7 +263,10 @@ async function createWindow() {
   }
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  applyDockIcon();
+  createWindow();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
@@ -156,6 +274,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => { sidecar.kill(); closeAllPanels(); });
 app.on('activate', () => {
+  applyDockIcon(); // macOS can re-pool the Dock icon after relaunch
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 
@@ -309,15 +428,16 @@ ipcMain.handle('open-external', async (_evt, url: string) => {
 ipcMain.handle('show-about', () => {
   dialog.showMessageBox({
     type: 'info',
-    title: 'About swing-analysis',
-    message: 'swing-analysis',
+    title: '关于 AceCrush Swing-Analysis',
+    message: 'AceCrush Swing-Analysis',
     detail: [
+      'AceCrush 品牌系列 · 网球挥拍自动切分工具',
+      '',
       `版本 ${app.getVersion()}`,
       `Electron ${process.versions.electron}`,
       `Node ${process.versions.node}`,
       `Chromium ${process.versions.chrome}`,
       '',
-      '网球挥拍自动切分工具 — 算法核心 vendored 在 backend/core/',
       '项目主页: https://github.com/leochan007/swing-analysis',
     ].join('\n'),
     buttons: ['OK'],
@@ -348,10 +468,10 @@ ipcMain.handle('clear-output-dir', async () => {
 //
 // On macOS the FIRST menu in the template is auto-promoted to the App
 // menu (label becomes the app name; system fills in About/Hide/Quit
-// etc.) — that would silently rename our "System" menu to
-// "swing-analysis" and hide it. So on macOS we prepend an explicit
-// App menu that carries those roles; System then becomes the second
-// menu in the bar and keeps its label.
+// etc.) — that would silently rename our "System" menu to "AceCrush"
+// and hide it. So on macOS we prepend an explicit App menu that carries
+// those roles; System then becomes the second menu in the bar and
+// keeps its label.
 function buildMenu() {
   const isMac = process.platform === 'darwin';
   const send = (channel: string) => () => {
@@ -401,7 +521,7 @@ function buildMenu() {
       },
       { type: 'separator' as const },
       {
-        label: 'About swing-analysis',
+        label: '关于 AceCrush Swing-Analysis',
         click: () => ipcMain.emit('menu:about'),
       },
     ],
@@ -418,15 +538,16 @@ ipcMain.on('menu:about', () => {
   if (!w) return;
   dialog.showMessageBox(w, {
     type: 'info',
-    title: 'About swing-analysis',
-    message: 'swing-analysis',
+    title: '关于 AceCrush Swing-Analysis',
+    message: 'AceCrush Swing-Analysis',
     detail: [
+      'AceCrush 品牌系列 · 网球挥拍自动切分工具',
+      '',
       `版本 ${app.getVersion()}`,
       `Electron ${process.versions.electron}`,
       `Node ${process.versions.node}`,
       `Chromium ${process.versions.chrome}`,
       '',
-      '网球挥拍自动切分工具 — 算法核心 vendored 在 backend/core/',
       '项目主页: https://github.com/leochan007/swing-analysis',
     ].join('\n'),
     buttons: ['OK'],

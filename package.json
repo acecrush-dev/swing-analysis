@@ -1,13 +1,30 @@
 {
   "name": "swing-analysis-gui",
+  "productName": "AceCrush Swing-Analysis",
   "version": "0.1.0",
   "private": true,
-  "description": "Electron + React + TS GUI for the swing-analysis Python service.",
+  "description": "Electron + React + TS GUI for the Swing-Analysis desktop app (AceCrush brand).",
   "main": "out/main/index.js",
+  "author": {
+    "name": "leochan007",
+    "url": "https://github.com/leochan007/swing-analysis"
+  },
+  "homepage": "https://leochan007.github.io/swing-analysis/",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "start": "electron-vite preview"
+    "start": "electron-vite preview",
+    "icons": "node scripts/generate-icons.js",
+    "bundle:py": "node scripts/build-python-bundle.js",
+    "prepack": "npm run icons && npm run bundle:py",
+    "pack:dir": "npm run icons && npm run bundle:py && electron-vite build && electron-builder --dir",
+    "pack:win": "npm run icons && npm run bundle:py && electron-vite build && electron-builder --win --x64",
+    "pack:mac": "npm run icons && npm run bundle:py && electron-vite build && electron-builder --mac",
+    "pack:mac:arm": "npm run icons && npm run bundle:py && electron-vite build && electron-builder --mac --arm64",
+    "pack:mac:intel": "npm run icons && npm run bundle:py && electron-vite build && electron-builder --mac --x64",
+    "pack:linux": "npm run icons && npm run bundle:py && electron-vite build && electron-builder --linux --x64",
+    "release:all": "npm run icons && npm run bundle:py && electron-vite build && electron-builder -mwl",
+    "postinstall": "electron-builder install-app-deps"
   },
   "devDependencies": {
     "@types/node": "^20",
@@ -15,6 +32,7 @@
     "@types/react-dom": "^18",
     "@vitejs/plugin-react": "^4",
     "electron": "^44.1.0",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^2",
     "typescript": "^5.4",
     "vite": "^5"
@@ -23,5 +41,121 @@
     "archiver": "^8.0.0",
     "react": "^18",
     "react-dom": "^18"
+  },
+  "build": {
+    "appId": "com.leochan007.acecrush.swinganalysis",
+    "copyright": "Copyright © 2026 leochan007",
+    "asar": true,
+    "compression": "maximum",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "package.json",
+      "!**/*.{md,markdown}",
+      "!**/{.editorconfig,.eslintrc*,.prettierrc*,.gitignore,tsconfig*.json}",
+      "!**/{__tests__,test,tests,powered-test,example,examples}",
+      "!**/{.DS_Store,Thumbs.db}",
+      "!**/*.{iml,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,suo,xproj,cc,d.ts}",
+      "!**/{.cache,.idea,.next,.nuxt,.output,.vite,.temp,.tmp,.vercel,dist}"
+    ],
+    "extraResources": [
+      {
+        "from": "backend/dist",
+        "to": "backend",
+        "filter": [
+          "swing-backend",
+          "swing-backend.exe"
+        ]
+      },
+      {
+        "from": "backend/models",
+        "to": "models"
+      }
+    ],
+    "extraMetadata": {
+      "main": "out/main/index.js"
+    },
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "${productName}-${version}-win-${arch}.${ext}",
+      "publisherName": "leochan007"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AceCrush Swing-Analysis",
+      "deleteAppDataOnUninstall": false
+    },
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
+      ],
+      "icon": "build/icon.icns",
+      "category": "public.app-category.sports",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSHumanReadableCopyright": "Copyright © 2026 leochan007",
+        "LSApplicationCategoryType": "public.app-category.sports"
+      },
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
+    },
+    "dmg": {
+      "title": "${productName} ${version}",
+      "iconSize": 128,
+      "contents": [
+        { "x": 130, "y": 220, "type": "file" },
+        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+      ],
+      "window": { "width": 540, "height": 380 }
+    },
+    "linux": {
+      "target": [
+        { "target": "AppImage", "arch": ["x64"] },
+        { "target": "deb", "arch": ["x64"] }
+      ],
+      "icon": "build/icon.png",
+      "category": "Sports",
+      "vendor": "leochan007",
+      "synopsis": "Tennis swing auto-segmentation tool",
+      "description": "AceCrush Swing-Analysis — automated swing detection, segmentation, and skeleton-overlay preview generation.",
+      "artifactName": "${productName}-${version}-linux-${arch}.${ext}"
+    },
+    "appImage": {
+      "executableName": "swing-analysis"
+    },
+    "deb": {
+      "depends": [
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xauth",
+        "libasound2",
+        "libatspi2.0-0",
+        "libsecret-1-0",
+        "libgbm1"
+      ]
+    },
+    "protocols": [
+      {
+        "name": "AceCrush Swing-Analysis",
+        "schemes": ["swing-analysis"]
+      }
+    ],
+    "publish": null
   }
 }

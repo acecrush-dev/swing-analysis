@@ -19,6 +19,20 @@ import { BrowserWindow, screen, app } from 'electron';
 import { join } from 'node:path';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
+// Same icon-resolution logic as src/main/index.ts (kept inline rather
+// than imported: panels.ts is loaded before main's appIconPath exists).
+function panelIconPath(): string | undefined {
+  const repoRoot = join(__dirname, '..', '..');
+  const ext = process.platform === 'darwin' ? 'icns'
+            : process.platform === 'win32'  ? 'ico'
+            : 'png';
+  const candidates = [
+    join(repoRoot, 'build', `icon.${ext}`),
+    join(process.resourcesPath ?? '', 'build', `icon.${ext}`),
+  ];
+  return candidates.find(existsSync);
+}
+
 export type PanelKind = 'clips' | 'log';
 
 /** Loose shape — schema is enforced at the renderer. */
@@ -41,14 +55,14 @@ const SPEC: Record<PanelKind, PanelSpec> = {
     defaultHeight: 420,
     minWidth: 360,
     minHeight: 240,
-    title: '🎬 Clips — swing-analysis',
+    title: '🎬 Clips — Swing-Analysis',
   },
   log: {
     defaultWidth: 620,
     defaultHeight: 520,
     minWidth: 360,
     minHeight: 280,
-    title: '📜 事件日志 — swing-analysis',
+    title: '📜 事件日志 — Swing-Analysis',
   },
 };
 
@@ -216,6 +230,7 @@ export function openPanel(kind: PanelKind, parent: BrowserWindow): { ok: boolean
     minHeight: spec.minHeight,
     parent,
     title: spec.title,
+    icon: panelIconPath(),
     autoHideMenuBar: true,
     backgroundColor: '#1a1a1a',
     show: false,

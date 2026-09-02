@@ -8,7 +8,7 @@ player did right (or wrong) at the moment of contact. Doing this by hand
 takes hours. Doing it by hand *again* every time you tweak parameters takes
 even longer.
 
-`swing-analysis` automates the **finding and clipping** step. You give it a
+`Swing-Analysis` automates the **finding and clipping** step. You give it a
 video and (optionally) some tuning knobs; it gives you back a list of swing
 cycles with phase boundaries (`ready / windup / contact / follow_through`)
 and pre-cut clip MP4s.
@@ -53,6 +53,22 @@ Two principles:
 This shape is what makes the GUI just a thin shell on top of the CLI. No
 algorithm code in the renderer. No "I have to maintain two implementations"
 debt.
+
+## Brand
+
+`Swing-Analysis` is one app under the **`AceCrush`** brand series — a
+parent line for sports-AI tools. Concrete shapes:
+
+- The Electron window title and `<title>` show `Swing-Analysis` — that's
+  the app you're in.
+- The macOS top-bar app menu and the Dock icon carry `AceCrush` — that's
+  the brand.
+- Installers (NSIS / DMG / AppImage / deb) and the macOS `.app` are
+  named `AceCrush Swing-Analysis` so users see the brand + app together.
+- Internal identifiers (`package.json` `name`, GitHub repo name,
+  GitHub Pages URL, git-clone path) stay lowercase as stable IDs — see
+  [05 · Electron GUI](05-electron-gui.md#brand-conventions) for the full
+  split.
 
 ## When NOT to use this
 

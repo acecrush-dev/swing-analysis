@@ -1,4 +1,4 @@
-"""swing-analysis backend package.
+"""Swing-Analysis backend package.
 
 Layers (bottom → top):
   backend.core          algorithm library (vendored, zero changes)

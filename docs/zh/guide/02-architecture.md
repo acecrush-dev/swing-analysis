@@ -6,8 +6,11 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │  L4 · UI                                                        │
 │      • Electron renderer (React, /src/renderer)                 │
+│        · 品牌: AceCrush (大品牌) / Swing-Analysis (这款 app)     │
+│        · 主窗口 + 可分离的 Clips 面板 + 可分离的                 │
+│          Event Log 面板 + Settings 浮层                          │
 │      • CLI 子命令:  segment  /  annotate                         │
-│      • (Phase C) 浏览器、移动端,任何讲 HTTP 的东西              │
+│      • 浏览器 / 移动端 / 任何讲 HTTP 的东西 (开放 API)          │
 └──────────────────────────────┬──────────────────────────────────┘
                                │  调到 L3
 ┌──────────────────────────────▼──────────────────────────────────┐
@@ -100,6 +103,7 @@ bbox 与骨架。返回完整的 `segments.json` payload dict。
 | `mediapipe.py` | `MediaPipePoseRunner` | BGR 帧 + ts_ms | `List[(x,y,conf)]` (33 关键点) |
 | `drawing.py` | `draw_bboxes` / `draw_skeleton_coco13` / `draw_skeleton_mp33` | canvas + payload | 改 in-place 后的 canvas |
 | `annotate.py` | `ClipAnnotator` | clip mp4 + flags | 标注后的 mp4 |
+| `clip_codec.py` | `find_ffmpeg` + `transcode_h264` | mp4v mp4 + (可选) bbox/skel flags | H.264 同名 mp4 + 缩略图 |
 
 组合发生在:
 - `pipeline.run_pipeline()` —— `extract_one_clip` → `ClipAnnotator.annotate_clip` 串联 (开了 `clip_bbox` 或 `clip_skel`)
@@ -108,7 +112,7 @@ bbox 与骨架。返回完整的 `segments.json` payload dict。
 ### L3 — 服务 / 传输 (`backend/service/`)
 
 - `app.py` —— FastAPI 工厂;CORS 放任何 localhost 端口;health / jobs /
-  events / videos / artifacts 路由
+  events / videos / artifacts / clips 路由
 - `jobs.py` —— `JobManager` 在内存里维护 `_JobRecord` 注册表。
   `ThreadPoolExecutor(max_workers=1)` 强制单 job 并发 (MediaPipe VIDEO
   模式有状态,吃满 CPU)。每个 job 有一个事件回放缓冲 (deque, maxlen
@@ -117,6 +121,29 @@ bbox 与骨架。返回完整的 `segments.json` payload dict。
   `SegmentOut`、`ProgressEvent`。字段名跟 CLI 参数名一一对应
 - `__main__.py` —— argparse + uvicorn;stdout 打 `SWING_SERVICE_URL=...`
   让 Electron 解析端口;写 `service.json` 兜底
+
+`__main__.py` flags:
+
+| Flag | Default | 备注 |
+| --- | --- | --- |
+| `--host` | `127.0.0.1` | bind 地址 |
+| `--port` | `8321` | bind 端口 (`0` 让 uvicorn 自选) |
+| `--models-dir` | `<repo>/backend/models` | MediaPipe / ONNX 模型目录 |
+| `--data-dir` | `<repo>/backend/data` (dev) / `<userData>/backend-data` (打包后) | 任务根目录 |
+| `--log-level` | `info` | uvicorn 日志级别 |
+
+### L4 — UI
+
+- **CLI** (`backend/cli.py`) —— argparse 默认值从 `DEFAULT_PARAMS`,stdout
+  进度打印、实时 segment 打印、SIGINT 处理器翻取消标志。两个子命令:
+  `segment` 和 `annotate`
+- **Electron** (这款 app:`AceCrush Swing-Analysis`) —— 完整组件图、
+  sidecar 生命周期、可分离面板系统、设置浮层、品牌约定见
+  [05 · Electron GUI](05-electron-gui.md)。`package.json` `productName`
+  是 `AceCrush Swing-Analysis`,macOS app 菜单槽单独挂着 `AceCrush`;
+  `appId` 是 `com.leochan007.acecrush.swinganalysis`。Windows / macOS /
+  Linux 安装器均由 `electron-builder` 出(见
+  [08 · Build & Package](08-build-package.md))。
 
 ### L4 — UI
 

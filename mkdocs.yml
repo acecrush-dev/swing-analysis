@@ -1,4 +1,4 @@
-# mkdocs configuration for swing-analysis.
+# mkdocs configuration for AceCrush Swing-Analysis.
 #
 # Single config drives TWO languages via mkdocs-static-i18n:
 #   English (default) → site/index.html, site/guide/...
@@ -12,7 +12,7 @@
 #   mkdocs gh-deploy --force                              # pushes site/ to gh-pages branch
 #   GitHub Actions does this automatically on push to main (see .github/workflows/docs.yml).
 
-site_name: swing-analysis
+site_name: AceCrush Swing-Analysis
 site_description: Desktop tennis-swing auto-segmentation — vendored algorithm + pluggable UI
 site_url: https://leochan007.github.io/swing-analysis/
 repo_url: https://github.com/leochan007/swing-analysis
@@ -57,7 +57,7 @@ extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/leochan007/swing-analysis
-      name: swing-analysis on GitHub
+      name: Swing-Analysis on GitHub
   generator: false
 
 markdown_extensions:
@@ -111,6 +111,7 @@ plugins:
             Electron GUI:        Electron GUI
             Reference:           Reference
             Troubleshooting:     Troubleshooting
+            Build & Package:     Build & Package
         - locale: zh
           name: 简体中文
           build: true
@@ -128,6 +129,7 @@ plugins:
             Electron GUI:        Electron GUI
             Reference:           参考
             Troubleshooting:     故障排查
+            Build & Package:     打包与发布
 
 nav:
   - Home: index.md
@@ -143,3 +145,4 @@ nav:
       - Electron GUI: guide/05-electron-gui.md
   - Reference:
       - Troubleshooting: guide/07-troubleshooting.md
+      - Build & Package: guide/08-build-package.md

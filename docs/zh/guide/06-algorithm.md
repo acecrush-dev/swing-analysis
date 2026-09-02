@@ -3,6 +3,8 @@
 切分管线是 v2.1。本章讲每一阶段做什么、v2 为何存在、哪些参数调起来
 最有效。`backend/core/segment_swing.py` 是真理之源 —— 逐行细节看那里。
 
+本算法是大品牌 `AceCrush` 旗下 `Swing-Analysis` 这款 app 的核心。
+
 ## v2 的来历
 
 v1 在真实录像 (`fdl.mp4`,约 9.4 分钟) 上有三个具体 bug:
