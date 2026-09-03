@@ -67,30 +67,39 @@ jobs:
           git config --global user.name  'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
 
-          # Clone the public repo's gh-pages branch into a sibling worktree.
-          # depth=1 is fine — every push rewrites the single commit anyway.
+          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${PUBLIC_REPO_FULL}.git"
+
           cd ..
           rm -rf public-pages
-          git clone \
-              --depth=1 \
-              --branch=gh-pages \
-              "https://x-access-token:${GH_TOKEN}@github.com/${PUBLIC_REPO_FULL}.git" \
-              public-pages
+
+          # ── 1. Acquire gh-pages worktree. First-ever run: the branch
+          #    doesn't exist yet, so the --branch clone fails; in that
+          #    case we clone the default branch, switch to a fresh
+          #    --orphan gh-pages, and let the later "wipe + replace"
+          #    fall through naturally.
+          if git clone --depth=1 --branch=gh-pages "$REMOTE" public-pages 2>/dev/null; then
+            echo "Cloned existing gh-pages branch"
+          else
+            echo "::notice::gh-pages branch missing on public repo — bootstrapping"
+            git clone --depth=1 "$REMOTE" public-pages
+            cd public-pages
+            git checkout -q --orphan gh-pages
+            git rm -rfq . 2>/dev/null || true
+            cd ..
+          fi
+
           cd public-pages
 
-          # Replace everything with the freshly-built dist (except a
-          # possible CNAME we don't yet support — skip if absent).
+          # ── 2. Replace the worktree with the freshly-built dist.
           git rm -r --quiet --ignore-unmatch . || true
-
-          # mirror dist/ contents into gh-pages root
           cp -R ../swing-analysis/docs/.vitepress/dist/. .
           # GH Pages filters underscore-leading filenames by default; opt
           # out of Jekyll processing so .vitepress/cache-related files
-          # are served as-is.
+          # are served as-is. (.nojekyll is harmless when the branch was
+          # just bootstrapped — it's the one file we kept above.)
           touch .nojekyll
 
-          # Skip the push if there's nothing new (defensive — shouldn't
-          # happen since we just overwrote with a fresh build).
+          # ── 3. Push if anything actually changed.
           if git diff --quiet HEAD; then
             echo "no changes to publish"
             exit 0
@@ -99,4 +108,7 @@ jobs:
           git add -A
           git commit -m "docs: build ${GITHUB_SHA}"
 
-          git push origin gh-pages
+          # Push; on first-ever publish the upstream gh-pages ref has
+          # no upstream-tracking ref yet because we didn't clone it, so
+          # git push origin HEAD:gh-pages is the safe form.
+          git push origin HEAD:gh-pages
