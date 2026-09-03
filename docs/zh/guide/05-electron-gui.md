@@ -67,7 +67,7 @@ src/
 | `package.json` `appImage.executableName` | `swing-analysis` | Linux ELF 二进制名(Linux 习惯用小写) |
 | `app.settings` / i18n `app.title` | `🎾 Swing-Analysis` | app 头部 |
 
-URL(`leochan007.github.io/swing-analysis/`、`github.com/leochan007/swing-analysis`)
+URL(`acecrush-dev.github.io/swing-analysis-app/`、`github.com/acecrush-dev/swing-analysis-app`)
 和 npm 包名(`swing-analysis-gui`)保持小写,因为它们是稳定标识符 — 改
 了会破坏外链与 npm 安装。
 
@@ -150,7 +150,7 @@ win/linux 指向 `<app>/resources/`。`defaultDataDir()`(`src/main/settings.ts`)
   Export Package…(`Cmd/Ctrl+E`),分隔符,Clear Current Job Dir,
   Clear Output Dir…,分隔符,Quit。
 - **Help 菜单**:Help Content(打开
-  `https://leochan007.github.io/swing-analysis/`),分隔符,
+  `https://acecrush-dev.github.io/swing-analysis-app/`),分隔符,
   About AceCrush Swing-Analysis。
 
 renderer 收每条点击为 `menu:<id>` IPC 事件,反应方式跟 app 内按钮一

@@ -7,8 +7,12 @@ export default defineConfig({
 
   // Project page lives at https://<owner>.github.io/<repo>/, so all generated
   // absolute URLs (/, /zh/, /guide/, /zh/guide/) get prefixed with this base.
-  // For local dev `npm run docs:dev` serves at http://localhost:5173/swing-analysis/.
-  base: '/swing-analysis/',
+  // The user-facing host is the PUBLIC mirror repo (acecrush-dev/
+  // swing-analysis-app) — the docs site is served from its gh-pages branch
+  // so installing users can read the manual without seeing the closed
+  // source. For local dev `npm run docs:dev` serves at
+  // http://localhost:5173/swing-analysis-app/.
+  base: '/swing-analysis-app/',
 
   // VitePress serves files from docs/public/ at the site root (with base prepended).
   // Override head tags only if you need to add PWA / theme-color metadata; the

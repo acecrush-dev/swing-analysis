@@ -1,0 +1,102 @@
+# ──────────────────────────────────────────────────────────────────────
+#  docs-publish-public.yml — build the docs site (private) and push the
+#  static output to the PUBLIC mirror repo's `gh-pages` branch.
+#
+#  Topology:
+#    swing-analysis  (private, source-of-truth + CI)
+#         │
+#         ▼  force-push dist/ over
+#    swing-analysis-app (public)
+#         │  gh-pages branch = built static site served by GH Pages
+#         │  master branch   = README + nothing else
+#
+#  Auth: PAT_PUBLIC_REPO — a Fine-grained PAT scoped to
+#  acecrush-dev/swing-analysis-app with Contents: Read and write
+#  (NOT a classic token; Fine-grained can be TTL-limited).
+#
+#  Trigger: push to main when docs/ or this workflow file changes;
+#  also manual dispatch for one-off rebuilds.
+# ──────────────────────────────────────────────────────────────────────
+
+name: docs-publish-public
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/docs-publish-public.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: docs-publish-public
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+      PUBLIC_REPO_FULL: 'acecrush-dev/swing-analysis-app'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Build VitePress site
+        run: npm run docs:build
+
+      # Auth with the PAT — `actions/checkout` doesn't accept a per-repo
+      # token when pushing to a *different* repo, so we shell out.
+      - name: Publish to gh-pages on the public repo
+        env:
+          GH_TOKEN: ${{ secrets.PAT_PUBLIC_REPO }}
+        run: |
+          set -euo pipefail
+          git config --global user.name  'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+
+          # Clone the public repo's gh-pages branch into a sibling worktree.
+          # depth=1 is fine — every push rewrites the single commit anyway.
+          cd ..
+          rm -rf public-pages
+          git clone \
+              --depth=1 \
+              --branch=gh-pages \
+              "https://x-access-token:${GH_TOKEN}@github.com/${PUBLIC_REPO_FULL}.git" \
+              public-pages
+          cd public-pages
+
+          # Replace everything with the freshly-built dist (except a
+          # possible CNAME we don't yet support — skip if absent).
+          git rm -r --quiet --ignore-unmatch . || true
+
+          # mirror dist/ contents into gh-pages root
+          cp -R ../swing-analysis/docs/.vitepress/dist/. .
+          # GH Pages filters underscore-leading filenames by default; opt
+          # out of Jekyll processing so .vitepress/cache-related files
+          # are served as-is.
+          touch .nojekyll
+
+          # Skip the push if there's nothing new (defensive — shouldn't
+          # happen since we just overwrote with a fresh build).
+          if git diff --quiet HEAD; then
+            echo "no changes to publish"
+            exit 0
+          fi
+
+          git add -A
+          git commit -m "docs: build ${GITHUB_SHA}"
+
+          git push origin gh-pages

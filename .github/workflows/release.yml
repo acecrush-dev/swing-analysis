@@ -1,0 +1,172 @@
+# ──────────────────────────────────────────────────────────────────────
+#  release.yml — build signed installers on a tag push, then attach them
+#  to a GitHub Release on the PUBLIC mirror repo.
+#
+#  Topology:
+#    swing-analysis  (private, source-of-truth + CI) ─── PAT_PUBLIC_REPO ──▶
+#    swing-analysis-app (public)
+#         └─ GitHub Release v$TAG carries .dmg / .zip / .exe / .AppImage
+#
+#  Auth: same PAT_PUBLIC_REPO as docs-publish-public.yml. The PAT needs
+#  Contents: Read and write on the public repo.
+#
+#  Trigger: tag push vX.Y.Z. Manual dispatch falls back to "build using
+#  whatever the most recent tag is", mirroring cc-mode-switcher's pattern.
+# ──────────────────────────────────────────────────────────────────────
+
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Tag to release (e.g. v1.2.3 or 1.2.3); empty = highest semver tag'
+        required: false
+        default: ''
+
+concurrency:
+  group: release
+  cancel-in-progress: false   # do NOT cancel mid-build — partial installers are worse than slow
+
+permissions:
+  contents: read
+
+jobs:
+  resolve-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      bare_version: ${{ steps.tag.outputs.bare }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve target tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ secrets.PAT_PUBLIC_REPO }}
+        run: |
+          set -euo pipefail
+          git fetch --tags origin
+
+          REQUESTED='${{ github.event.inputs.version }}'
+          if [[ -n "$REQUESTED" ]]; then
+            # Strip leading v if the user typed it
+            REQUESTED="${REQUESTED#v}"
+            TAG="v${REQUESTED}"
+            git rev-parse --verify "refs/tags/${TAG}" >/dev/null 2>&1 || {
+              echo "Tag ${TAG} does not exist on origin"; exit 1
+            }
+          elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG=$(git tag --sort=-v:refname \
+                    | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+                    | head -1)
+            [[ -n "$TAG" ]] || { echo "no vX.Y.Z tags on origin yet"; exit 1; }
+          fi
+
+          BARE="${TAG#v}"
+          echo "version=${TAG}"      >> "$GITHUB_OUTPUT"
+          echo "bare=${BARE}"        >> "$GITHUB_OUTPUT"
+
+  build-installers:
+    needs: resolve-tag
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-tag.outputs.version }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      # Backend PyInstaller one-file (linux + windows targets).
+      # macOS uses a separate job below because Linux/Windows runners
+      # cross-build and macOS targets need a mac runner.
+      - name: Build Linux + Windows installers
+        run: |
+          npm run icons
+          npm run bundle:py
+          npx electron-builder --linux --x64
+          npx electron-builder --win --x64
+
+      - name: Collect Linux + Windows artefacts
+        id: collect-lw
+        run: |
+          mkdir -p out
+          cp release/*.{deb,AppImage,exe,msi,zip,blockmap} out/ 2>/dev/null || true
+          ls -la out/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ needs.resolve-tag.outputs.bare }}
+          path: out/
+
+  build-mac-installers:
+    needs: resolve-tag
+    runs-on: macos-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-tag.outputs.version }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Build macOS installers (arm64 + x64)
+        run: |
+          npm run icons
+          npm run bundle:py
+          npx electron-builder --mac --arm64
+          npx electron-builder --mac --x64
+
+      - name: Collect macOS artefacts
+        run: |
+          mkdir -p out
+          cp release/*.{dmg,zip,blockmap} out/ 2>/dev/null || true
+          ls -la out/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-mac-${{ needs.resolve-tag.outputs.bare }}
+          path: out/
+
+  publish-release:
+    needs: [resolve-tag, build-installers, build-mac-installers]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installers-*
+          path: dist/
+
+      - env:
+          GH_TOKEN: ${{ secrets.PAT_PUBLIC_REPO }}
+          TAG: ${{ needs.resolve-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          gh release create "$TAG" \
+              --repo acecrush-dev/swing-analysis-app \
+              --title "AceCrush Swing-Analysis $TAG" \
+              --notes "Automated release. See [the docs site](https://acecrush-dev.github.io/swing-analysis-app/) for installation notes and changelog." \
+              --generate-notes \
+              dist/installers-${{ needs.resolve-tag.outputs.bare }}/* \
+              dist/installers-mac-${{ needs.resolve-tag.outputs.bare }}/*

@@ -97,12 +97,14 @@ importable as a library:
 
 ## Documentation
 
-The full bilingual documentation site is published at
-**[leochan007.github.io/swing-analysis](https://leochan007.github.io/swing-analysis/)**
-([中文](https://leochan007.github.io/swing-analysis/zh/)) — built with
-**VitePress**, auto-deployed to GitHub Pages on every push to `main`
-(via `.github/workflows/docs.yml`); manual override via
-`./scripts/deploy-docs.sh [--update-meta]`.
+The full bilingual documentation site is published on the **public mirror
+repo** at
+**[acecrush-dev.github.io/swing-analysis-app](https://acecrush-dev.github.io/swing-analysis-app/)**
+([中文](https://acecrush-dev.github.io/swing-analysis-app/zh/)) — built
+with **VitePress**, mirrored from this private repo via
+`./scripts/sync-to-public.sh` (which writes the built `dist/` into the
+public repo's `docs/` and the README + release artifacts alongside).
+Markdown sources live in this repo under [`docs/`](docs/).
 
 Markdown sources also live in this repo under [`docs/`](docs/) for offline
 reading and editing:

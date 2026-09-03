@@ -70,7 +70,7 @@ src/
 | `package.json` `appImage.executableName` | `swing-analysis` | Linux ELF binary name (Linux convention = lowercase) |
 | `app.settings`/`i18n` `app.title` | `🎾 Swing-Analysis` | app header |
 
-URLs (`leochan007.github.io/swing-analysis/`, `github.com/leochan007/swing-analysis`)
+URLs (`acecrush-dev.github.io/swing-analysis-app/`, `github.com/acecrush-dev/swing-analysis-app`)
 and the npm-package name (`swing-analysis-gui`) stay lowercase because
 they are stable identifiers — changing them would break external links
 and npm installations.
@@ -163,7 +163,7 @@ Defined in `buildMenu()` (`src/main/index.ts`):
   Export Package… (`Cmd/Ctrl+E`), separator, Clear Current Job Dir,
   Clear Output Dir…, separator, Quit.
 - **Help menu**: Help Content (opens
-  `https://leochan007.github.io/swing-analysis/`), separator, About
+  `https://acecrush-dev.github.io/swing-analysis-app/`), separator, About
   AceCrush Swing-Analysis.
 
 The renderer receives each click as a `menu:<id>` IPC event and reacts

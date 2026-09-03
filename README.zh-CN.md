@@ -94,12 +94,12 @@ npm install && npm run dev
 
 ## 文档
 
-完整双语文档站发布在
-**[leochan007.github.io/swing-analysis/zh](https://leochan007.github.io/swing-analysis/zh/)**
-([English](https://leochan007.github.io/swing-analysis/)) —— **VitePress**
-构建,每次 push 到 `main` 自动部署到 GitHub Pages(走
-`.github/workflows/docs.yml`);本地手动重发布用
-`./scripts/deploy-docs.sh [--update-meta]`。
+完整双语文档站在**公共镜像仓库**发布:
+**[acecrush-dev.github.io/swing-analysis-app/zh](https://acecrush-dev.github.io/swing-analysis-app/zh/)**
+([English](https://acecrush-dev.github.io/swing-analysis-app/)) ——
+**VitePress** 构建,通过 `./scripts/sync-to-public.sh` 从本私有仓库
+镜像(把构建好的 `dist/` 写到公共仓库 `docs/`,顺带 README 和 release
+产物)。Markdown 源码在本仓库 [`docs/`](docs/) 下,方便离线阅读与编辑。
 
 Markdown 源码也在仓库 [`docs/`](docs/) 下,方便离线阅读与编辑:
 
