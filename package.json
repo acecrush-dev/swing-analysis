@@ -16,6 +16,10 @@
     "start": "electron-vite preview",
     "icons": "node scripts/generate-icons.js",
     "bundle:py": "node scripts/build-python-bundle.js",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs",
+    "docs:deploy": "bash scripts/deploy-docs.sh",
     "prepack": "npm run icons && npm run bundle:py",
     "pack:dir": "npm run icons && npm run bundle:py && electron-vite build && electron-builder --dir",
     "pack:win": "npm run icons && npm run bundle:py && electron-vite build && electron-builder --win --x64",
@@ -35,7 +39,9 @@
     "electron-builder": "^26.15.3",
     "electron-vite": "^2",
     "typescript": "^5.4",
-    "vite": "^5"
+    "vite": "^5",
+    "vitepress": "^1.6.4",
+    "gh-pages": "^6.1.0"
   },
   "dependencies": {
     "archiver": "^8.0.0",
@@ -80,7 +86,12 @@
     },
     "win": {
       "target": [
-        { "target": "nsis", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "icon": "build/icon.ico",
       "artifactName": "${productName}-${version}-win-${arch}.${ext}",
@@ -97,8 +108,20 @@
     },
     "mac": {
       "target": [
-        { "target": "dmg", "arch": ["x64", "arm64"] },
-        { "target": "zip", "arch": ["x64", "arm64"] }
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
       ],
       "icon": "build/icon.icns",
       "category": "public.app-category.sports",
@@ -116,15 +139,37 @@
       "title": "${productName} ${version}",
       "iconSize": 128,
       "contents": [
-        { "x": 130, "y": 220, "type": "file" },
-        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+        {
+          "x": 130,
+          "y": 220,
+          "type": "file"
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
       ],
-      "window": { "width": 540, "height": 380 }
+      "window": {
+        "width": 540,
+        "height": 380
+      }
     },
     "linux": {
       "target": [
-        { "target": "AppImage", "arch": ["x64"] },
-        { "target": "deb", "arch": ["x64"] }
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "icon": "build/icon.png",
       "category": "Sports",
@@ -153,7 +198,9 @@
     "protocols": [
       {
         "name": "AceCrush Swing-Analysis",
-        "schemes": ["swing-analysis"]
+        "schemes": [
+          "swing-analysis"
+        ]
       }
     ],
     "publish": null

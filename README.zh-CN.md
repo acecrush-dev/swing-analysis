@@ -96,8 +96,10 @@ npm install && npm run dev
 
 完整双语文档站发布在
 **[leochan007.github.io/swing-analysis/zh](https://leochan007.github.io/swing-analysis/zh/)**
-([English](https://leochan007.github.io/swing-analysis/)) —— mkdocs +
-mkdocs-material 构建,每次 push 到 `main` 自动部署到 GitHub Pages。
+([English](https://leochan007.github.io/swing-analysis/)) —— **VitePress**
+构建,每次 push 到 `main` 自动部署到 GitHub Pages(走
+`.github/workflows/docs.yml`);本地手动重发布用
+`./scripts/deploy-docs.sh [--update-meta]`。
 
 Markdown 源码也在仓库 [`docs/`](docs/) 下,方便离线阅读与编辑:
 

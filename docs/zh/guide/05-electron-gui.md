@@ -161,6 +161,8 @@ renderer 收每条点击为 `menu:<id>` IPC 事件,反应方式跟 app 内按钮
 
 `src/renderer/src/App.tsx` 搭出双栏主窗口。运行时:
 
+![Swing-Analysis 主窗口 —— 已加载视频,下方是 clip 缩略图条](/images/load_video.png)
+
 ```
 ┌──────────────────────────────────────────────────┬──────────────────┐
 │ 📁 [drag-drop 区] 视频选择器(播放器)              │ ⚙ Parameters     │
@@ -194,6 +196,13 @@ idle  ──[start]──▶  queued  ──[ws.open]──▶  running
 `SettingsPanel` 与 `HelpPanel` 是**浮层**(fixed-position 模态),用
 `App.tsx` 里的 `useState` 控制显隐,盖满整个窗口但不影响底层布局;
 ESC 可关,点击空白可关。
+
+clip 切出来后,底部 ClipsBar 出现每个周期的缩略图;点哪个就内联播放。
+勾上 `clip_bbox + clip_skel` 后,player 会显示带叠加的版本(你设的
+`color_bbox` 颜色的人物框 + `color_pose_left/right/body` 骨架),同时双
+进度条亮起:
+
+![第 3 段 clip 正在播放,带人物框 + 骨架 + 双进度条](/images/clip_play.png)
 
 ## 可分离面板
 

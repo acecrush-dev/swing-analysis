@@ -1,13 +1,17 @@
-# GitHub Pages — build & deploy the bilingual mkdocs site on every push to main.
+# GitHub Pages — build & deploy the bilingual VitePress site on every
+# push that touches docs/, the workflow itself, or the lockfile.
 #
-# What it does:
-#   1. checkout the repo
-#   2. install Python deps (mkdocs + material + static-i18n)
-#   3. mkdocs build (outputs English at / and Chinese at /zh/)
-#   4. upload site/ as a Pages artifact + deploy via official actions/deploy-pages
+# Pipeline:
+#   1. checkout (with full history so the deploy-pages action has ref info)
+#   2. npm ci — reproducible install from package-lock.json
+#   3. npm run docs:build — vitepress writes docs/.vitepress/dist/
+#   4. upload that dist/ as a Pages artifact + deploy via official
+#      actions/deploy-pages (recommended over pushing a gh-pages branch).
 #
-# Uses the official GitHub Pages deploy action (recommended by GitHub) instead of
-# pushing to a gh-pages branch. Requires Pages source to be "GitHub Actions".
+# Required repo setting: Settings → Pages → Source = "GitHub Actions".
+# Permissions: contents:read, pages:write, id-token:write (OIDC for the
+# deploy action — auto-granted by GitHub when you flip Pages to Actions
+# as the source).
 
 name: docs
 
@@ -16,18 +20,22 @@ on:
     branches: [main]
     paths:
       - 'docs/**'
-      - 'mkdocs.yml'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/docs.yml'
   workflow_dispatch:    # manual trigger from the Actions tab
 
+# Cancel an in-flight deploy when a fresh commit lands; otherwise the
+# previous build would race the new one and the live site would briefly
+# flicker between snapshots.
 concurrency:
-  group: docs-${{ github.ref }}
+  group: pages
   cancel-in-progress: true
 
 permissions:
   contents: read
   pages: write
-  id-token: write   # required by actions/deploy-pages for OIDC token verification
+  id-token: write
 
 jobs:
   build-and-deploy:
@@ -37,21 +45,17 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
         with:
-          fetch-depth: 0
-          lfs: true   # pull the LFS-tracked ONNX models (workflow file shouldn't depend on them, but keep checkout consistent)
+          node-version: 22
+          cache: npm
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
 
-      - name: Install docs deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r docs/requirements-docs.txt
-
-      - name: Build site (English + Chinese)
-        run: mkdocs build --clean --strict
+      - name: Build VitePress site
+        run: npm run docs:build
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -59,7 +63,7 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./site
+          path: docs/.vitepress/dist
 
       - name: Deploy to GitHub Pages
         id: deployment

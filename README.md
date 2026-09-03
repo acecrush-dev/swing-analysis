@@ -100,7 +100,9 @@ importable as a library:
 The full bilingual documentation site is published at
 **[leochan007.github.io/swing-analysis](https://leochan007.github.io/swing-analysis/)**
 ([中文](https://leochan007.github.io/swing-analysis/zh/)) — built with
-mkdocs + mkdocs-material, auto-deployed to GitHub Pages on every push to `main`.
+**VitePress**, auto-deployed to GitHub Pages on every push to `main`
+(via `.github/workflows/docs.yml`); manual override via
+`./scripts/deploy-docs.sh [--update-meta]`.
 
 Markdown sources also live in this repo under [`docs/`](docs/) for offline
 reading and editing:

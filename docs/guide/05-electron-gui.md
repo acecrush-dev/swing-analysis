@@ -217,6 +217,8 @@ The 2-column main window is built in `src/renderer/src/App.tsx`. Below is
 the runtime picture (detached panels collapse back inline when their
 window is closed):
 
+![Swing-Analysis main window — original video loaded with clip strip below](/images/load_video.png)
+
 ```
 ┌──────────────────────────────────────────────────┬──────────────────┐
 │ 📁 [drag-drop zone] Video picker (player)        │ ⚙ Parameters     │
@@ -253,6 +255,14 @@ idle  ──[start]──▶  queued  ──[ws.open]──▶  running
 keyed off a `useState` in `App.tsx`. They cover the entire window
 without disturbing the underlying layout, Esc-closable, backdrop-click
 closable.
+
+Once clip extraction kicks in, the bottom ClipsBar populates with
+per-cycle thumbnails; click one to play it inline. With
+`clip_bbox + clip_skel` enabled, the player surfaces the annotated
+overlay (RTMDet box in your chosen `color_bbox` + per-side skeleton in
+`color_pose_left/right/body`) and the dual progress strip lights up:
+
+![Clip #3 playing with bbox overlay + skeleton + dual progress bars](/images/clip_play.png)
 
 ## Detachable panels
 
