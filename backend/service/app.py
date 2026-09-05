@@ -59,6 +59,23 @@ def create_app(jobs: JobManager, data_dir: Path) -> FastAPI:
             "models_dir": str(jobs._models_dir),
         }
 
+    # ── status (splash-screen polling target) ───────────────────────────
+    # Returns the live warmup state so the Electron splash window can show
+    # per-model loading progress + close-on-ready. Distinct from /api/health
+    # which is a cheap file-existence check used by external monitors.
+    @app.get("/api/status")
+    def status() -> dict:
+        # Imported lazily so /api/health stays fast on cold start.
+        from .warmup import STATE
+        snap = STATE.to_dict()
+        snap["version"] = SERVICE_VERSION
+        # all_ready: True iff every model we attempted to load is in `ready`.
+        # `pending` and `loading` mean still in progress; `failed` means
+        # the splash should surface the error and let the user decide.
+        states = set(snap["models"].values())
+        snap["all_ready"] = snap["models"] and states <= {"ready"}
+        return snap
+
     # ── jobs ────────────────────────────────────────────────────────────
     @app.post("/api/jobs", response_model=JobAccepted)
     def create_job(req: JobCreate) -> JobAccepted:

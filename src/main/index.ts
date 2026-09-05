@@ -25,6 +25,13 @@ class PythonSidecar {
   private command: string;
   private baseArgs: string[];
   private cwd?: string;
+  // Log subscribers — each stderr line is forwarded verbatim. Used by the
+  // splash window to render the loading log; main process still writes to
+  // its own stderr too.
+  private logSubs: Set<(line: string) => void> = new Set();
+  // Status poll subscribers — polled at startStatusPolling interval.
+  private statusSubs: Set<(snap: any) => void> = new Set();
+  private statusPollTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(command: string, baseArgs: string[], cwd?: string) {
     this.command = command;
@@ -33,6 +40,47 @@ class PythonSidecar {
   }
 
   baseUrl(): string | null { return this.info?.url ?? null; }
+
+  /** Subscribe to sidecar stderr (one callback per stdout/stderr line, no trailing newline).
+   *  Returns an unsubscribe function. */
+  addLogSubscriber(cb: (line: string) => void): () => void {
+    this.logSubs.add(cb);
+    return () => { this.logSubs.delete(cb); };
+  }
+
+  /** Subscribe to /api/status snapshots. No-op until startStatusPolling() runs. */
+  addStatusSubscriber(cb: (snap: any) => void): () => void {
+    this.statusSubs.add(cb);
+    return () => { this.statusSubs.delete(cb); };
+  }
+
+  /** Begin polling /api/status every `intervalMs`. Idempotent. */
+  startStatusPolling(intervalMs: number = 500): void {
+    if (this.statusPollTimer) return;
+    const tick = async () => {
+      if (!this.info) return;
+      try {
+        const res = await fetch(`${this.info.url}/api/status`);
+        if (res.ok) {
+          const snap = await res.json();
+          for (const cb of this.statusSubs) {
+            try { cb(snap); } catch { /* don't let one bad subscriber kill the poll */ }
+          }
+        }
+      } catch { /* transient — next tick will retry */ }
+    };
+    // Fire one immediately so subscribers don't wait `intervalMs` for the
+    // first reading after the sidecar binds.
+    void tick();
+    this.statusPollTimer = setInterval(() => { void tick(); }, intervalMs);
+  }
+
+  stopStatusPolling(): void {
+    if (this.statusPollTimer) {
+      clearInterval(this.statusPollTimer);
+      this.statusPollTimer = null;
+    }
+  }
 
   async start(timeoutMs?: number): Promise<ServiceInfo> {
     if (this.info) return this.info;
@@ -81,7 +129,18 @@ class PythonSidecar {
         }
       };
       this.proc!.stdout.on('data', onLine);
-      this.proc!.stderr.on('data', (b) => process.stderr.write('[svc] ' + b.toString()));
+      this.proc!.stderr.on('data', (b) => {
+        const text = b.toString();
+        process.stderr.write('[svc] ' + text);
+        // Per-line fan-out to subscribers (split on newlines so a single
+        // chunk containing multiple lines delivers all of them).
+        for (const line of text.split(/\r?\n/)) {
+          if (line.length === 0) continue;
+          for (const cb of this.logSubs) {
+            try { cb(line); } catch { /* ignore — don't kill the rest */ }
+          }
+        }
+      });
       this.proc!.on('exit', (code) => {
         if (!this.info) {
           clearTimeout(timer);
@@ -106,6 +165,7 @@ class PythonSidecar {
       }
       try { proc.kill(); } catch {}
     }
+    this.stopStatusPolling();
     this.proc = null;
     this.info = null;
   }
@@ -245,15 +305,104 @@ function applyDockIcon() {
 }
 
 async function createWindow() {
-  let info: ServiceInfo;
+  // Splash-gated startup. The splash window is created and shown
+  // immediately so the user sees something during the entire
+  // onefile-extract + warmup window (~10–25 s cold). Log lines from the
+  // sidecar and a 500 ms /api/status poll flow to the splash via the
+  // preload-exposed channels; when all models report `ready`, the splash
+  // closes and the main window takes over.
+  const splash = new BrowserWindow({
+    width: 560,
+    height: 520,
+    frame: false,
+    transparent: false,
+    backgroundColor: '#0a0e1a',
+    alwaysOnTop: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    show: false,                       // show after first paint to avoid white flash
+    title: 'Swing-Analysis',
+    webPreferences: {
+      preload: join(__dirname, '..', 'preload', 'index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  splash.webContents.on('will-navigate', (e) => e.preventDefault());
+  splash.once('ready-to-show', () => splash.show());
+
+  // The IPC receiver flips from splash → main when the splash closes.
+  // We keep the /api/status poll running forever (not just for the
+  // splash window) so the main window's StatusBar shows live state.
+  // The receiver is captured by closure — both subscribers read it on
+  // every event so the switch happens naturally without resubscribing.
+  let activeReceiver: BrowserWindow = splash;
+  const send = (channel: string, payload: unknown) => {
+    if (activeReceiver && !activeReceiver.isDestroyed()) {
+      activeReceiver.webContents.send(channel, payload);
+    }
+  };
+  const offLog = sidecar.addLogSubscriber((line) => send('sidecar:log', line));
+  let mainWin: BrowserWindow | null = null;
+  let dismissed = false;
+  const offStatus = sidecar.addStatusSubscriber((snap: any) => {
+    send('sidecar:status', snap);
+    if (snap?.all_ready && !dismissed) {
+      dismissed = true;
+      // Tiny grace period so the splash can render the "Ready." state
+      // for a beat before swapping out — avoids a jarring instant flip.
+      setTimeout(() => {
+        if (splash.isDestroyed()) return;
+        mainWin = createMainWindow();
+        setPanelActionSink((a) => {
+          if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('panel:action', a);
+          if (a && a.type === 'select-clip' && mainWin && !mainWin.isDestroyed()) {
+            if (mainWin.isMinimized()) mainWin.restore();
+            mainWin.show();
+            mainWin.focus();
+          }
+        });
+        loadMainWindow(mainWin).catch((e) => console.error('[main] main window load failed:', e));
+        splash.close();
+        // Switch the IPC target to the main window. Subscribers stay
+        // registered; status polling keeps running so the StatusBar in
+        // the main window reflects any future model reload / status
+        // change (e.g. if the sidecar goes down and comes back).
+        activeReceiver = mainWin;
+      }, 400);
+    }
+  });
+
+  // Load splash HTML first so the window has SOMETHING to show while
+  // uvicorn is still booting.
+  if (process.env.ELECTRON_RENDERER_URL) {
+    await splash.loadURL(`${process.env.ELECTRON_RENDERER_URL}/splash.html`);
+  } else {
+    await splash.loadFile(join(__dirname, '..', 'renderer', 'splash.html'));
+  }
+
+  // Now spawn the sidecar. Warmup runs INSIDE the sidecar before
+  // SWING_SERVICE_URL is printed, so /api/status will return
+  // all_ready the moment the URL is parsed.
   try {
-    info = await sidecar.start();
+    await sidecar.start();
   } catch (e) {
+    // Surface the failure both in the splash log and via a native dialog
+    // so the user actually notices before the splash auto-closes.
+    if (!splash.isDestroyed()) {
+      splash.webContents.send('sidecar:log', `[error] ${String(e)}`);
+    }
     const { dialog: dlg } = await import('electron');
     dlg.showErrorBox('sidecar 启动失败', String(e));
     app.quit();
     return;
   }
+  sidecar.startStatusPolling(500);
+}
+
+function createMainWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -266,20 +415,11 @@ async function createWindow() {
     }
   });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  // Plan 004 — pipe panel-window action requests back into the main
-  // window. select-clip additionally yanks focus back to main so the
-  // user sees the playback switch immediately.
-  setPanelActionSink((a) => {
-    if (!win.isDestroyed()) win.webContents.send('panel:action', a);
-    if (a && a.type === 'select-clip') {
-      if (!win.isDestroyed()) {
-        if (win.isMinimized()) win.restore();
-        win.show();
-        win.focus();
-      }
-    }
-  });
   win.on('closed', () => closeAllPanels());
+  return win;
+}
+
+async function loadMainWindow(win: BrowserWindow): Promise<void> {
   if (process.env.ELECTRON_RENDERER_URL) {
     await win.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {

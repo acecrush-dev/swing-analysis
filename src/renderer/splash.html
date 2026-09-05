@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <title>Swing-Analysis — Loading…</title>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #0a0e1a; color: #e8eaf0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+    #root { width: 100vw; height: 100vh; }
+    .splash {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: radial-gradient(ellipse at top, #1a2240 0%, #0a0e1a 65%);
+    }
+    .splash-content {
+      position: relative;
+      width: 460px;
+      max-width: 92vw;
+      padding: 28px 28px 22px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+    }
+    .splash-brand {
+      font-size: 13px;
+      letter-spacing: 0.18em;
+      color: #6a738f;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    .splash-title {
+      font-size: 20px;
+      font-weight: 600;
+      color: #e8eaf0;
+      text-align: center;
+    }
+    .splash-ball {
+      width: 180px;
+      height: 180px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 6px 0 4px;
+    }
+    .splash-ball canvas { width: 180px; height: 180px; }
+    .splash-tagline {
+      font-size: 12px;
+      color: #8d96b0;
+      letter-spacing: 0.04em;
+      min-height: 16px;
+    }
+    .splash-status {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-top: 4px;
+    }
+    .status-row {
+      display: grid;
+      grid-template-columns: 90px 14px 1fr;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 10px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 6px;
+      font-size: 12px;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    }
+    .status-name { color: #b6bdd2; }
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #4a5170;
+      transition: background 0.25s, box-shadow 0.25s;
+    }
+    .status-state {
+      text-align: right;
+      color: #6a738f;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .status-row.state-pending  .status-dot { background: #4a5170; }
+    .status-row.state-loading  .status-dot { background: #f0b85c; box-shadow: 0 0 6px #f0b85c; animation: pulse 1s infinite; }
+    .status-row.state-ready    .status-dot { background: #5dd28a; box-shadow: 0 0 6px #5dd28a; }
+    .status-row.state-failed   .status-dot { background: #ef5b5b; box-shadow: 0 0 6px #ef5b5b; }
+    .status-row.state-ready    .status-state { color: #5dd28a; }
+    .status-row.state-failed   .status-state { color: #ef5b5b; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.4; }
+    }
+    .splash-logs {
+      width: 100%;
+      min-height: 22px;
+      max-height: 22px;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      margin-top: 4px;
+      padding: 4px 10px;
+      background: rgba(0, 0, 0, 0.35);
+      border-radius: 4px;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 11px;
+      line-height: 14px;
+      color: #8d96b0;
+    }
+    .log-line {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .log-line.is-placeholder { color: #5a6080; font-style: italic; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/splash.tsx"></script>
+</body>
+</html>

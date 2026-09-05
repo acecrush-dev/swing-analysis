@@ -59,6 +59,13 @@ declare global {
       pickOutputDir: () => Promise<
         { ok: true; path: string | null } | { ok: false; error: string }
       >;
+
+      // ── splash screen: sidecar log + status stream ───────────
+      // Used by src/renderer/splash.tsx to draw the model-loading
+      // progress + log feed while the sidecar warms up. Returns an
+      // unsubscribe fn (mirrors the panel-state listeners above).
+      onSidecarLog: (cb: (line: string) => void) => () => void;
+      onSidecarStatus: (cb: (snap: unknown) => void) => () => void;
     };
   }
 }

@@ -31,6 +31,7 @@ export default defineConfig({
           index: resolve(__dirname, 'src/renderer/index.html'),
           clips: resolve(__dirname, 'src/renderer/clips.html'),
           log: resolve(__dirname, 'src/renderer/log.html'),
+          splash: resolve(__dirname, 'src/renderer/splash.html'),
         }
       }
     },

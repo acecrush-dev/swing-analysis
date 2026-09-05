@@ -18,6 +18,7 @@ import type { PanelStateSnapshot } from './api/panels';
 import { useI18n, toggleLocale, getLocale } from './i18n';
 import * as busy from './busy';
 import type { BusyState } from './busy';
+import { StatusBar } from './components/StatusBar';
 import './api/electron-api';
 
 // Allowed video extensions (kept in sync with the dialog filter on the
@@ -741,9 +742,20 @@ export default function App() {
   return (
     <div
       style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100vh',
+        fontFamily: 'system-ui',
+        color: 'var(--text)',
+        background: 'var(--bg)',
+      }}
+    >
+    <div
+      style={{
         display: 'grid',
         gridTemplateColumns: '1fr 360px',
-        height: '100vh',
+        flex: 1,
+        minHeight: 0,
         fontFamily: 'system-ui',
         color: 'var(--text)',
         background: 'var(--bg)',
@@ -953,6 +965,12 @@ export default function App() {
           t={t}
         />
       )}
+    </div>
+
+      {/* Persistent bottom strip showing sidecar status + last few log
+          lines. Always visible so the user can see model state at a
+          glance even after the splash closes. */}
+      <StatusBar />
     </div>
   );
 }

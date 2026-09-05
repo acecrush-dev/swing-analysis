@@ -93,4 +93,21 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('panel:action', handler);
     return () => ipcRenderer.removeListener('panel:action', handler);
   },
+
+  // ── splash screen: live sidecar log + status stream ───────────
+  // Used by the splash renderer (src/renderer/splash.tsx) to draw the
+  // model-loading progress + log feed while the sidecar warms up.
+  // `onSidecarLog` fires per stderr line (one print per model state
+  // transition, prefixed `[model]`); `onSidecarStatus` fires on every
+  // 500 ms poll of /api/status until the splash closes.
+  onSidecarLog: (cb: (line: string) => void) => {
+    const handler = (_e: unknown, line: string) => cb(line);
+    ipcRenderer.on('sidecar:log', handler);
+    return () => ipcRenderer.removeListener('sidecar:log', handler);
+  },
+  onSidecarStatus: (cb: (snap: unknown) => void) => {
+    const handler = (_e: unknown, snap: unknown) => cb(snap);
+    ipcRenderer.on('sidecar:status', handler);
+    return () => ipcRenderer.removeListener('sidecar:status', handler);
+  },
 });

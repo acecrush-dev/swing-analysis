@@ -17,6 +17,8 @@ import uvicorn
 
 from .app import build_app
 from .jobs import JobManager
+from .pipeline import DEFAULT_PARAMS
+from .warmup import warmup
 
 
 def main(argv=None) -> int:
@@ -34,6 +36,12 @@ def main(argv=None) -> int:
         help="数据目录 (jobs/ 与 service.json)",
     )
     parser.add_argument("--log-level", default="info", help="uvicorn 日志级别")
+    parser.add_argument(
+        "--skip-warmup",
+        action="store_true",
+        help="Skip eager model load at startup (models load lazily on first use; "
+             "splash screen will report 'pending' until then)",
+    )
     args = parser.parse_args(argv)
 
     models_dir = Path(args.models_dir).resolve()
@@ -78,6 +86,29 @@ def main(argv=None) -> int:
         (data_dir / "service.json").write_text(
             json.dumps(service_info, indent=2), encoding="utf-8"
         )
+
+        # Eager-load pose models BEFORE printing the discovery URL. The
+        # Electron main process waits for `SWING_SERVICE_URL=` to switch
+        # from the splash to the main window — running warmup first means
+        # the splash stays up through the entire cold-init (onefile
+        # extraction already happened by now, but ONNX/CoreML first-touch
+        # init still adds 5–15 s), and `/api/status` returns
+        # `models.all=ready` the moment the URL is printed. Without this,
+        # the splash would flip to the main UI instantly and the user's
+        # first clip annotation would silently pay the full init cost.
+        if not args.skip_warmup:
+            default_backend = DEFAULT_PARAMS.get("skel_backend", "rtmpose")
+            print(
+                f"[service] pre-warming pose models (default={default_backend}) …",
+                file=sys.stderr, flush=True,
+            )
+            # warmup() is sync — blocks the event loop briefly. Models take
+            # ~5–15 s on first ONNX/CoreML init; doing this on the event
+            # loop is fine because uvicorn hasn't started handling requests
+            # yet (we haven't yielded back to the server) and the splash
+            # only logs `[model]` lines, not ports.
+            warmup(models_dir=models_dir, default_backend=default_backend)
+
         # stdout marker line — Electron parses this
         print(f"SWING_SERVICE_URL=http://{bound_host}:{bound_port}", flush=True)
         await install_task
