@@ -38,6 +38,7 @@ backend/data/                    # service.json, jobs/<id>/segments.json etc.
 # but the real binary is downloaded on `git lfs checkout`.
 backend/cli_jobs/                # if CLI --out-dir points here
 backend/dist/                    # PyInstaller one-file build output (see scripts/build-python-bundle.js)
+backend/build/                   # PyInstaller --workpath / --specpath intermediates (scripts/build-python-bundle.js)
 __pycache__/
 *.pyc
 *.pyo
@@ -69,3 +70,4 @@ htmlcov/
 test-results/
 data
 *.zip
+*.test

@@ -33,7 +33,7 @@ run('magick', [source, '-background', 'none', '-resize', '1024x1024',
 // 2. Multi-res Windows .ico
 const icoSizes = [16, 24, 32, 48, 64, 128, 256];
 const icoArgs = [source];
-for (const s of icoSizes) icoArgs.push('(' + source, '-clone', '0', '-resize', `${s}x${s}`, ')');
+for (const s of icoSizes) icoArgs.push('(', '-clone', '0', '-resize', `${s}x${s}`, ')');
 icoArgs.push('-delete', '0', resolve(buildDir, 'icon.ico'));
 run('magick', icoArgs);
 

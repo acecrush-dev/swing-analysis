@@ -1,35 +1,44 @@
 # ──────────────────────────────────────────────────────────────────────
-#  release.yml — build signed installers on a tag push, then attach them
-#  to a GitHub Release on the PUBLIC mirror repo.
+#  release.yml — build signed installers from an EXISTING tag, attach
+#  them to a draft GitHub Release on the PUBLIC mirror repo, then
+#  optionally promote draft → public on a second dispatch.
 #
-#  Topology:
+#  Topology (unchanged from previous version):
 #    swing-analysis  (private, source-of-truth + CI) ─── PAT_PUBLIC_REPO ──▶
 #    swing-analysis-app (public)
 #         └─ GitHub Release v$TAG carries .dmg / .zip / .exe / .AppImage
 #
-#  Auth: same PAT_PUBLIC_REPO as docs-publish-public.yml. The PAT needs
-#  Contents: Read and write on the public repo.
+#  Manual-only: this workflow no longer fires on tag push. Tag creation
+#  lives in `set-version.yml`, which is the ONLY workflow that writes
+#  the version/commit/tag triple to git. Release is always an explicit
+#  human action.
 #
-#  Trigger: tag push vX.Y.Z. Manual dispatch falls back to "build using
-#  whatever the most recent tag is", mirroring cc-mode-switcher's pattern.
+#  Two ways to invoke:
+#    - version empty       → picks highest semver tag on origin.
+#    - version=1.2.3       → rebuilds that specific tag (re-publish path).
+#  publish_final=false (default) → leaves the release as draft.
+#  publish_final=true            → also promotes draft → public after upload.
+#  The tag MUST already exist on origin. Refusal to auto-create stays in
+#  `set-version.yml` (auto-tag at release time has burned us before).
 # ──────────────────────────────────────────────────────────────────────
 
 name: release
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Tag to release (e.g. v1.2.3 or 1.2.3); empty = highest semver tag'
+        description: 'Tag to release — "1.2.3" or "v1.2.3". Empty = highest semver tag on origin.'
         required: false
         default: ''
+      publish_final:
+        description: 'After upload, auto promote draft → public release?'
+        type: boolean
+        default: false
 
 concurrency:
-  group: release
-  cancel-in-progress: false   # do NOT cancel mid-build — partial installers are worse than slow
+  group: release-${{ inputs.version || 'auto' }}
+  cancel-in-progress: false   # partial installers are worse than slow
 
 permissions:
   contents: read
@@ -40,6 +49,8 @@ jobs:
     outputs:
       version: ${{ steps.tag.outputs.version }}
       bare_version: ${{ steps.tag.outputs.bare }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,41 +59,69 @@ jobs:
       - name: Resolve target tag
         id: tag
         env:
-          GH_TOKEN: ${{ secrets.PAT_PUBLIC_REPO }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           git fetch --tags origin
 
-          REQUESTED='${{ github.event.inputs.version }}'
-          if [[ -n "$REQUESTED" ]]; then
-            # Strip leading v if the user typed it
-            REQUESTED="${REQUESTED#v}"
-            TAG="v${REQUESTED}"
-            git rev-parse --verify "refs/tags/${TAG}" >/dev/null 2>&1 || {
-              echo "Tag ${TAG} does not exist on origin"; exit 1
-            }
-          elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            TAG="${GITHUB_REF#refs/tags/}"
+          RAW="$INPUT_VERSION"
+
+          if [ -z "$RAW" ]; then
+            CANDIDATES="$(
+              git ls-remote --tags origin \
+                | awk '{print $2}' \
+                | sed 's|^refs/tags/||' \
+                | grep -v '\^' \
+                | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' \
+                || true
+            )"
+            TAG="$(printf '%s\n' "$CANDIDATES" | sort -V | tail -n 1)"
+            if [ -z "$TAG" ]; then
+              echo "::error::No semver tag found on origin (looked for vX.Y.Z)."
+              echo "::error::Run 'Set version & tag' first to create one, then re-run this workflow."
+              exit 1
+            fi
+            echo "No version supplied — picked highest tag on origin: ${TAG}."
           else
-            TAG=$(git tag --sort=-v:refname \
-                    | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-                    | head -1)
-            [[ -n "$TAG" ]] || { echo "no vX.Y.Z tags on origin yet"; exit 1; }
+            if [[ "$RAW" == v* ]]; then
+              TAG="$RAW"
+              VER="${RAW#v}"
+            else
+              TAG="v$RAW"
+              VER="$RAW"
+            fi
+            if ! [[ "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::'${RAW}' is not a valid semver version (expected X.Y.Z or vX.Y.Z)"
+              exit 1
+            fi
+            if ! git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
+              echo "::error::Tag '${TAG}' does not exist on origin."
+              echo "::error::Run 'Set version & tag' first, then re-run with version=${VER}."
+              exit 1
+            fi
+            echo "Resolved ${RAW} → ${TAG} (exists on origin)."
           fi
 
           BARE="${TAG#v}"
-          echo "version=${TAG}"      >> "$GITHUB_OUTPUT"
-          echo "bare=${BARE}"        >> "$GITHUB_OUTPUT"
+          echo "version=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "bare=${BARE}"   >> "$GITHUB_OUTPUT"
 
-  build-installers:
+  build-linux:
     needs: resolve-tag
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve-tag.outputs.version }}
+          lfs: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: pip install --upgrade pip
+      - run: pip install -r backend/requirements.txt pyinstaller
 
       - uses: actions/setup-node@v4
         with:
@@ -90,38 +129,85 @@ jobs:
           cache: npm
 
       - run: npm ci --no-audit --no-fund
+      - name: Build Python sidecar (ELF, --onefile)
+        run: npm run bundle:py
 
-      # Backend PyInstaller one-file (linux + windows targets).
-      # macOS uses a separate job below because Linux/Windows runners
-      # cross-build and macOS targets need a mac runner.
-      - name: Build Linux + Windows installers
-        run: |
-          npm run icons
-          npm run bundle:py
-          npx electron-builder --linux --x64
-          npx electron-builder --win --x64
+      - name: Build Linux installers (AppImage + deb, x64)
+        run: npx electron-builder --linux --x64
 
-      - name: Collect Linux + Windows artefacts
-        id: collect-lw
+      - name: Collect Linux artefacts
         run: |
           mkdir -p out
-          cp release/*.{deb,AppImage,exe,msi,zip,blockmap} out/ 2>/dev/null || true
+          cp release/*.{deb,AppImage,blockmap} out/ 2>/dev/null || true
           ls -la out/
 
       - uses: actions/upload-artifact@v4
         with:
-          name: installers-${{ needs.resolve-tag.outputs.bare }}
+          name: installers-linux-${{ needs.resolve-tag.outputs.bare_version }}
           path: out/
 
-  build-mac-installers:
+  build-windows:
+    needs: resolve-tag
+    runs-on: windows-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+      # Authenticode: present → sign, absent → skip without workflow change.
+      CSC_LINK: ${{ secrets.CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-tag.outputs.version }}
+          lfs: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: pip install --upgrade pip
+      - run: pip install -r backend/requirements.txt pyinstaller
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+      - name: Build Python sidecar (PE32+, --onedir)
+        run: npm run bundle:py
+
+      - name: Build Windows installer (NSIS, x64)
+        run: npx electron-builder --win --x64
+
+      - name: Collect Windows artefacts
+        shell: bash
+        run: |
+          mkdir -p out
+          cp release/*.exe release/*.blockmap out/ 2>/dev/null || true
+          ls -la out/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-windows-${{ needs.resolve-tag.outputs.bare_version }}
+          path: out/
+
+  build-mac:
     needs: resolve-tag
     runs-on: macos-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+      # Apple notarization + Developer ID signing. All optional — empty
+      # values make electron-builder emit unsigned artefacts (see docs 08
+      # "First launch & unsigned artifacts" for the user-facing workaround).
+      CSC_LINK: ${{ secrets.CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve-tag.outputs.version }}
+          lfs: true
 
       - uses: actions/setup-node@v4
         with:
@@ -130,43 +216,95 @@ jobs:
 
       - run: npm ci --no-audit --no-fund
 
-      - name: Build macOS installers (arm64 + x64)
-        run: |
-          npm run icons
-          npm run bundle:py
-          npx electron-builder --mac --arm64
-          npx electron-builder --mac --x64
-
-      - name: Collect macOS artefacts
+      # ── Pass 1: arm64 (native Apple Silicon Python) ──
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: pip install --upgrade pip
+      - run: pip install -r backend/requirements.txt pyinstaller
+      - name: Build Python sidecar (Mach-O arm64)
+        run: npm run bundle:py
+      - name: Evidence — verify arm64 Mach-O
+        run: file backend/dist/swing-backend
+      - name: Build macOS installers (arm64)
+        run: npx electron-builder --mac --arm64
+      - name: Collect arm64 artefacts
         run: |
           mkdir -p out
-          cp release/*.{dmg,zip,blockmap} out/ 2>/dev/null || true
+          mv release/*arm64* out/ 2>/dev/null || true
+          ls -la out/
+
+      # ── Pass 2: x64 (Rosetta Python) ──
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          architecture: x64
+      - run: pip install --upgrade pip
+      - run: pip install -r backend/requirements.txt pyinstaller
+      - name: Build Python sidecar (Mach-O x86_64)
+        run: npm run bundle:py
+      - name: Evidence — verify x86_64 Mach-O
+        run: |
+          file backend/dist/swing-backend
+          file backend/dist/swing-backend | grep -q 'x86_64' || {
+            echo "sidecar Mach-O is not x86_64 — pass2 PyInstaller picked the wrong interpreter"; exit 1;
+          }
+      - name: Build macOS installers (x64)
+        run: npx electron-builder --mac --x64
+      - name: Collect x64 artefacts
+        run: |
+          mv release/*x64* out/ 2>/dev/null || true
           ls -la out/
 
       - uses: actions/upload-artifact@v4
         with:
-          name: installers-mac-${{ needs.resolve-tag.outputs.bare }}
+          name: installers-mac-${{ needs.resolve-tag.outputs.bare_version }}
           path: out/
 
   publish-release:
-    needs: [resolve-tag, build-installers, build-mac-installers]
+    needs: [resolve-tag, build-linux, build-windows, build-mac]
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
     steps:
       - uses: actions/download-artifact@v4
         with:
           pattern: installers-*
           path: dist/
 
-      - env:
+      - name: Create DRAFT release on public mirror
+        env:
           GH_TOKEN: ${{ secrets.PAT_PUBLIC_REPO }}
           TAG: ${{ needs.resolve-tag.outputs.version }}
         run: |
           set -euo pipefail
+          shopt -s globstar
+          ls -la dist/
+          ls -la dist/installers-*/
 
           gh release create "$TAG" \
               --repo acecrush-dev/swing-analysis-app \
               --title "AceCrush Swing-Analysis $TAG" \
-              --notes "Automated release. See [the docs site](https://acecrush-dev.github.io/swing-analysis-app/) for installation notes and changelog." \
+              --notes "Automated draft release. Promote to public via the 'release' workflow with publish_final=true once verified." \
               --generate-notes \
-              dist/installers-${{ needs.resolve-tag.outputs.bare }}/* \
-              dist/installers-mac-${{ needs.resolve-tag.outputs.bare }}/*
+              --draft \
+              dist/installers-*/**/*
+
+          echo "::notice::Draft release ${TAG} created: https://github.com/acecrush-dev/swing-analysis-app/releases/tag/${TAG}"
+
+  publish:
+    needs: publish-release
+    runs-on: ubuntu-latest
+    if: ${{ inputs.publish_final }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+    steps:
+      - name: Promote draft release → public
+        env:
+          GH_TOKEN: ${{ secrets.PAT_PUBLIC_REPO }}
+          TAG: ${{ needs.resolve-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          echo "Promoting draft release ${TAG} to public …"
+          gh release edit "${TAG}" --repo acecrush-dev/swing-analysis-app --draft=false
+          echo "::notice::Release ${TAG} is now public: https://github.com/acecrush-dev/swing-analysis-app/releases/tag/${TAG}"

@@ -1,0 +1,156 @@
+# ──────────────────────────────────────────────────────────────────────
+#  set-version.yml — bump package.json to a new version, refresh the
+#  lockfile, commit, and push the resulting git tag.
+#
+#  This is the ONLY workflow that creates the (commit, tag) pair on
+#  origin. `release.yml` consumes an existing tag — it never invents
+#  one. Splitting these two concerns (version bumping vs. artifact
+#  building) means a tag on origin is always a real, reviewed commit,
+#  and a release workflow run is always a deliberate human action.
+#
+#  Two ways to pick the target version:
+#    - mode=auto → bump the current version by patch / minor / major.
+#    - mode=set  → use the explicit `version` input. Works for upgrades
+#                 AND downgrades (downgrade keeps the old tags in place;
+#                 cleanup is manual).
+#
+#  Old tags / releases are NOT deleted by this workflow.
+#
+#  Edge case: when the requested version equals the current version
+#  (e.g. someone bumped package.json manually but forgot to push the tag,
+#  or this workflow failed mid-run earlier), there is nothing to commit
+#  but the tag may still be missing on origin. In that case we print a
+#  notice and create the tag without a commit, instead of erroring with
+#  "no changes to commit". The pre-existing tag-existence guard still
+#  rejects the case where the tag IS on origin.
+# ──────────────────────────────────────────────────────────────────────
+
+name: Set version & tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'auto = bump current; set = use explicit `version` (can be lower than current)'
+        type: choice
+        options: [auto, set]
+        default: auto
+      bump:
+        description: 'Bump type, only used when mode=auto'
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      version:
+        description: 'Target X.Y.Z, only used when mode=set'
+        type: string
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: set-version
+  cancel-in-progress: false
+
+jobs:
+  set:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute target version
+        id: version
+        env:
+          MODE: ${{ inputs.mode }}
+          BUMP: ${{ inputs.bump }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          CURRENT=$(node -p "require('./package.json').version")
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+
+          if [ "$MODE" = "set" ]; then
+            if [ -z "$INPUT_VERSION" ]; then
+              echo "::error::mode=set requires the 'version' input (e.g. 0.0.1)"
+              exit 1
+            fi
+            NEW="$INPUT_VERSION"
+          else
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+            case "$BUMP" in
+              major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+              minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+              patch) PATCH=$((PATCH + 1)) ;;
+            esac
+            NEW="$MAJOR.$MINOR.$PATCH"
+          fi
+
+          if ! [[ "$NEW" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Resolved version '$NEW' is not semver (X.Y.Z)"
+            exit 1
+          fi
+
+          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+          echo "tag=v$NEW" >> "$GITHUB_OUTPUT"
+          echo "Target: $CURRENT → $NEW (tag v$NEW)"
+
+      - name: Reject if target tag already exists on origin
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
+            echo "::error::Tag '${TAG}' already exists on origin."
+            echo "::error::To re-release an existing tag: Actions → release → Run workflow → version=${TAG#v}."
+            echo "::error::To pick a different version: change the inputs and re-run."
+            exit 1
+          fi
+
+      - name: Update package.json
+        env:
+          NEW: ${{ steps.version.outputs.new }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            pkg.version = process.env.NEW;
+            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
+          '
+
+      - name: Refresh package-lock.json (version-only change)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm install --package-lock-only
+
+      - name: Show what's about to be committed
+        run: git status --short
+
+      - name: Commit, tag, push
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          NEW: ${{ steps.version.outputs.new }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add package.json package-lock.json
+          if git diff --cached --quiet; then
+            # Resolved version equals current — there's nothing to commit.
+            # The "Reject if target tag already exists on origin" step ran earlier
+            # and let us through, so the tag is genuinely missing on origin.
+            # Tag-only runs are valid: re-tag the current release without a new commit.
+            echo "::notice::Resolved version equals current ($NEW) — no source changes to commit"
+            echo "::notice::Tag '${TAG}' is not on origin (verified above) — creating tag without a commit"
+          else
+            git commit -m "release v${NEW}"
+            git push origin HEAD:main
+          fi
+
+          git tag "$TAG"
+          git push origin "$TAG"

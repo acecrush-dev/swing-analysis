@@ -34,13 +34,18 @@ class PythonSidecar {
 
   baseUrl(): string | null { return this.info?.url ?? null; }
 
-  async start(timeoutMs = 15000): Promise<ServiceInfo> {
+  async start(timeoutMs?: number): Promise<ServiceInfo> {
     if (this.info) return this.info;
     if (process.env.SWING_SERVICE_URL) {
       this.info = this.parseUrl(process.env.SWING_SERVICE_URL);
       console.log('[sidecar] attach to', this.info.url);
       return this.info;
     }
+    // Packaged macOS onefile first launch decompresses the bundle to a
+    // temp dir (~3–8s on SSD) before the sidecar can print its URL — the
+    // old 15s ceiling blew past that on slower disks. Packaged gets 60s;
+    // dev keeps the tight 15s so a missing dependency surfaces fast.
+    const timeout = timeoutMs ?? (app.isPackaged ? 60000 : 15000);
     const args = [
       ...this.baseArgs,
       '--port', '0',
@@ -51,10 +56,19 @@ class PythonSidecar {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.kill();
-        reject(new Error('sidecar 启动超时 (15s)'));
-      }, timeoutMs);
+        reject(new Error(`sidecar 启动超时 (${Math.round(timeout / 1000)}s)`));
+      }, timeout);
+      // windowsHide: don't pop a console window for the console-subsystem
+      //   sidecar binary on Windows.
+      // detached (POSIX only): put the sidecar in its own process group so
+      //   process.kill(-pid) in kill() reaches the whole tree, not just
+      //   the immediate child.
       const spawnOpts = this.cwd ? { cwd: this.cwd } : {};
-      this.proc = spawn(this.command, args, spawnOpts);
+      this.proc = spawn(this.command, args, {
+        ...spawnOpts,
+        windowsHide: true,
+        detached: process.platform !== 'win32',
+      });
       const onLine = (chunk: Buffer) => {
         const s = chunk.toString();
         for (const line of s.split(/\r?\n/)) {
@@ -80,7 +94,14 @@ class PythonSidecar {
   kill() {
     const proc = this.proc; // local binding: TS narrows `this.proc` poorly across the try blocks
     if (proc && !proc.killed) {
-      if (typeof proc.pid === 'number') {
+      if (process.platform === 'win32' && typeof proc.pid === 'number') {
+        // Windows: kill the whole process tree (uvicorn + any workers).
+        // `process.kill(-pid)` only works for POSIX process groups —
+        // on Windows it throws ESRCH and the python child leaks.
+        try {
+          spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { windowsHide: true });
+        } catch { /* ignore — fall through to proc.kill() */ }
+      } else if (typeof proc.pid === 'number') {
         try { process.kill(-proc.pid); } catch {}
       }
       try { proc.kill(); } catch {}
@@ -124,7 +145,13 @@ function pickSidecarLaunch(): SidecarLaunchSpec {
     // in win/linux. Models + the swing-backend binary land here.
     const resBase = process.resourcesPath ?? join(repoRoot, 'release');
     const isWin = process.platform === 'win32';
-    const exe = join(resBase, 'backend', `swing-backend${isWin ? '.exe' : ''}`);
+    // Windows uses --onedir (see scripts/build-python-bundle.js header for
+    // rationale); the .exe lives inside the onedir tree, not at its root.
+    // macOS / Linux use --onefile so the binary sits directly under
+    // resources/backend/.
+    const exe = isWin
+      ? join(resBase, 'backend', 'swing-backend-win', 'swing-backend.exe')
+      : join(resBase, 'backend', 'swing-backend');
     return {
       command: exe,
       baseArgs: [],
