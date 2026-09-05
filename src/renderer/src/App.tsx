@@ -19,6 +19,7 @@ import { useI18n, toggleLocale, getLocale } from './i18n';
 import * as busy from './busy';
 import type { BusyState } from './busy';
 import { StatusBar } from './components/StatusBar';
+import { TsPipelinePanel } from './components/TsPipelinePanel';
 import './api/electron-api';
 
 // Allowed video extensions (kept in sync with the dialog filter on the
@@ -67,6 +68,10 @@ export default function App() {
   }, []);
   const [dropActive, setDropActive] = useState(false);
   const dropCounter = useRef(0);
+  // 'python' (default) → normal flow with sidecar. 'ts' → placeholder
+  // UI; Phase 2+ will run models in renderer via WASM. null = not yet
+  // resolved from main (initial render before IPC roundtrip).
+  const [backendMode, setBackendMode] = useState<'python' | 'ts' | null>(null);
   const [baseUrl, setBaseUrl] = useState<string | null>(null);
   const [videoPath, setVideoPath] = useState<string | null>(null);
   const [params, setParams] = useState<JobParams>(DEFAULT_PARAMS);
@@ -164,6 +169,8 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
+        const mode = await window.api.getBackendMode();
+        setBackendMode(mode);
         const url = await window.api.getServiceInfo();
         setBaseUrl(url);
       } catch (e: any) {
@@ -738,6 +745,11 @@ export default function App() {
   // Strictly the user's spec: shows dual bars only when a clip annotation
   // flag is on, not for extract-only runs.
   const clipBarsEnabled = params.save_clips && (params.clip_bbox || params.clip_skel);
+
+  // TS backend mode: render the real pipeline panel (Phase 3+).
+  if (backendMode === 'ts') {
+    return <TsPipelinePanel />;
+  }
 
   return (
     <div

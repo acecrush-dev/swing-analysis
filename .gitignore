@@ -71,3 +71,4 @@ test-results/
 data
 *.zip
 *.test
+.env

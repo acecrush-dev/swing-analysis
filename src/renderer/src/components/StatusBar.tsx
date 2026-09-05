@@ -22,10 +22,14 @@
  * transfers directly. CSS vars from styles.css drive the chrome
  * (border / background) so light/dark theme flips automatically.
  */
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import {
+  subscribe as subscribeModels,
+  loadAll as loadAllModels,
+  type ModelName,
+  type ModelState,
+} from '../lib/modelLoader';
 
-type ModelName = 'rtmdet' | 'rtmpose' | 'mediapipe';
-type ModelState = 'pending' | 'loading' | 'ready' | 'failed';
 type SidecarState = 'starting' | 'ready' | 'failed';
 
 interface StatusSnapshot {
@@ -43,10 +47,15 @@ const LOG_MAX = 60;        // rolling buffer size (chars/line)
 export function StatusBar() {
   const [status, setStatus] = useState<StatusSnapshot | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
+  const [backendMode, setBackendMode] = useState<'python' | 'ts' | null>(null);
 
   useEffect(() => {
     const api = window.api;
     if (!api) return;
+    void api.getBackendMode().then(setBackendMode);
+    // In ts mode the sidecar never starts, so onSidecarStatus /
+    // onSidecarLog would never fire — subscribing is harmless but
+    // pointless. Keep the calls so a single component works in both.
     const offStatus = api.onSidecarStatus((snap) => {
       setStatus(snap as StatusSnapshot);
     });
@@ -60,6 +69,19 @@ export function StatusBar() {
     });
     return () => { offStatus(); offLog(); };
   }, []);
+
+  // TS mode — render the same status dots as Python mode, but the data
+  // comes from the renderer-side modelLoader instead of /api/status.
+  // Eager-load all three on mount; StatusBar reflects progress live.
+  const [tsState, setTsState] = useState<Record<ModelName, { state: ModelState; bytes?: number; error?: string }>>({
+    rtmdet: { state: 'pending' }, rtmpose: { state: 'pending' }, mediapipe: { state: 'pending' },
+  });
+  useEffect(() => {
+    if (backendMode !== 'ts') return;
+    const off = subscribeModels(setTsState);
+    void loadAllModels();
+    return off;
+  }, [backendMode]);
 
   const containerStyle: React.CSSProperties = {
     flex: '0 0 auto',
@@ -111,6 +133,44 @@ export function StatusBar() {
     justifyContent: 'flex-end',
   };
   const emptyLogsStyle: React.CSSProperties = { ...logsStyle, fontStyle: 'italic', color: '#5a6080' };
+
+  // ── TS backend render branch ──────────────────────────────────────────
+  // Same visual as Python mode, but the dots + ready state come from
+  // the renderer-side modelLoader instead of /api/status. Eager-load all
+  // three on mount; subscribers see the dots light up in sequence.
+  if (backendMode === 'ts') {
+    const tsReady = MODELS.every((m) => tsState[m].state === 'ready');
+    const failedMs = MODELS.find((m) => tsState[m].state === 'failed');
+    return (
+      <div style={containerStyle}>
+        <style>{`@keyframes swing-status-pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.4 } }`}</style>
+        <div style={stripStyle}>
+          {MODELS.map((m) => (
+            <span key={m} style={itemStyle}>
+              <span style={dot(tsState[m].state)} />
+              <span style={labelStyle}>{m}</span>
+              {tsState[m].bytes != null && (
+                <span style={{ ...muted, fontSize: 10 }}>
+                  {(tsState[m].bytes! / 1024 / 1024).toFixed(0)} MiB
+                </span>
+              )}
+            </span>
+          ))}
+          <span style={{ ...muted, marginLeft: 'auto' }}>
+            TS backend (WASM){' · '}
+            {tsReady ? 'ready' : (failedMs ? 'load failed' : 'loading')}
+          </span>
+        </div>
+        {failedMs && (
+          <div style={logsStyle}>
+            <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: '#ef5b5b' }}>
+              {failedMs}: {tsState[failedMs].error}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div style={containerStyle}>

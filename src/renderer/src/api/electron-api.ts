@@ -17,6 +17,13 @@ declare global {
     api: {
       pickVideo: () => Promise<string | null>;
       getServiceInfo: () => Promise<string | null>;
+      // 'python' → PyInstaller sidecar (full features);
+      // 'ts'     → renderer-only (Phase 1 placeholder UI).
+      getBackendMode: () => Promise<'python' | 'ts'>;
+      // Splash signals "ready" once models are loaded. Main listens on
+      // the 'splash:ready' IPC channel and swaps the splash out for
+      // the main window. Same channel for python and ts modes.
+      splashReady: () => void;
       getDroppedFilePath: (file: File) => string;
       exportPackage: (jobId: string | null, callId: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
       openExternal: (url: string) => Promise<boolean>;

@@ -32,7 +32,24 @@ export default defineConfig({
           clips: resolve(__dirname, 'src/renderer/clips.html'),
           log: resolve(__dirname, 'src/renderer/log.html'),
           splash: resolve(__dirname, 'src/renderer/splash.html'),
-        }
+        },
+        // onnxruntime-web resolves its WASM by canonical name
+        // (`ort-wasm-simd-threaded.jsep.wasm`) at runtime. Vite's
+        // default hashed filename breaks that lookup. Strip the hash
+        // for any asset that looks like the ORT wasm so modelLoader
+        // can find it at /assets/ort-wasm-simd-threaded.jsep.wasm.
+        output: {
+          assetFileNames: (assetInfo) => {
+            const n = assetInfo.names?.[0] ?? '';
+            if (n.startsWith('ort-wasm-simd-threaded.jsep')) {
+              return 'assets/ort-wasm-simd-threaded.jsep.wasm';
+            }
+            if (n.startsWith('ort-wasm-simd')) {
+              return 'assets/[name][extname]';
+            }
+            return 'assets/[name]-[hash][extname]';
+          },
+        },
       }
     },
     server: {

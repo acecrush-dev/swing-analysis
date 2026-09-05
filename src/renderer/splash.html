@@ -33,6 +33,19 @@
       color: #6a738f;
       text-transform: uppercase;
       font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .splash-mode-badge {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      padding: 2px 7px;
+      border-radius: 3px;
+      background: rgba(93, 210, 138, 0.15);
+      color: #5dd28a;
+      border: 1px solid rgba(93, 210, 138, 0.35);
     }
     .splash-title {
       font-size: 20px;
@@ -91,6 +104,28 @@
     .status-row.state-loading  .status-dot { background: #f0b85c; box-shadow: 0 0 6px #f0b85c; animation: pulse 1s infinite; }
     .status-row.state-ready    .status-dot { background: #5dd28a; box-shadow: 0 0 6px #5dd28a; }
     .status-row.state-failed   .status-dot { background: #ef5b5b; box-shadow: 0 0 6px #ef5b5b; }
+    .status-error {
+      /* Block display so the error gets the full row width instead of
+         fighting for space with the state label. */
+      display: block;
+      grid-column: 1 / -1;
+      margin-top: 4px;
+      padding: 6px 8px;
+      font-size: 11px;
+      color: #ef5b5b;
+      background: rgba(239, 91, 91, 0.08);
+      border: 1px solid rgba(239, 91, 91, 0.25);
+      border-radius: 4px;
+      cursor: help;
+      /* Wrap + clamp so huge stack traces don't push the layout off-screen.
+         Full text is on hover via title=. */
+      display: -webkit-box;
+      -webkit-line-clamp: 4;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
     .status-row.state-ready    .status-state { color: #5dd28a; }
     .status-row.state-failed   .status-state { color: #ef5b5b; }
     @keyframes pulse {

@@ -13,6 +13,14 @@ export type ExportResult =
 contextBridge.exposeInMainWorld('api', {
   pickVideo: () => ipcRenderer.invoke('pick-video') as Promise<string | null>,
   getServiceInfo: () => ipcRenderer.invoke('get-service-info') as Promise<string | null>,
+  // Backend mode (env-driven). 'python' → PyInstaller sidecar, 'ts' →
+  // renderer-only (Phase 1 placeholder; Phase 2/3 will run WASM models).
+  getBackendMode: () => ipcRenderer.invoke('get-backend-mode') as Promise<'python' | 'ts'>,
+
+  // Splash → main: "all models loaded, swap in the main window now".
+  // Used in BOTH modes — python (sidecar warmup done) and ts (renderer
+  // loader reports allReady). One signal channel, one close path.
+  splashReady: () => { ipcRenderer.send('splash:ready'); },
   // Drag-and-drop helper — Electron 32+ removed `File.path` for security,
   // so we have to go through webUtils.getPathForFile in the preload
   // context to recover the absolute path that the user actually dropped.

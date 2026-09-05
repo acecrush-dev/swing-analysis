@@ -1,7 +1,20 @@
+import 'dotenv/config';
 import { app, BrowserWindow, ipcMain, dialog, shell, Menu, MenuItemConstructorOptions } from 'electron';
 import { join, resolve as resolvePath } from 'node:path';
 import { spawn, ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync, readdirSync, statSync, createWriteStream, mkdirSync, rmSync, unlinkSync, readFileSync } from 'node:fs';
+
+// ── Backend mode (env-driven) ─────────────────────────────────────────────
+// SWING_BACKEND=python (default) — full PyInstaller sidecar, all features.
+// SWING_BACKEND=ts — skip sidecar entirely; renderer runs models in WASM
+//                     (onnxruntime-web + @mediapipe/tasks-vision). Phase 1
+//                     shows a placeholder UI; Phase 2+ will land actual
+//                     algorithm ports.
+// dotenv/config loads `.env` from cwd at module-init time. In dev cwd
+// is the project root; in packaged the cwd is `/` so .env is only read
+// during dev. In prod set the env var on the launching shell instead.
+const BACKEND_MODE: 'python' | 'ts' = (process.env.SWING_BACKEND || '').toLowerCase() === 'ts' ? 'ts' : 'python';
+console.log(`[main] SWING_BACKEND=${BACKEND_MODE}`);
 import {
   openPanel,
   closePanel,
@@ -305,12 +318,20 @@ function applyDockIcon() {
 }
 
 async function createWindow() {
-  // Splash-gated startup. The splash window is created and shown
-  // immediately so the user sees something during the entire
-  // onefile-extract + warmup window (~10–25 s cold). Log lines from the
-  // sidecar and a 500 ms /api/status poll flow to the splash via the
-  // preload-exposed channels; when all models report `ready`, the splash
-  // closes and the main window takes over.
+  // Splash-gated startup for BOTH backend modes. The splash window is
+  // created and shown immediately so the user sees something during
+  // the entire model-load window (~5–25 s cold, varying with mode).
+  //
+  // Readiness signal:
+  //   python mode — the sidecar subprocess does the warmup; /api/status
+  //     reports all_ready. Main forwards via sidecar:status IPC; the
+  //     splash renderer fires window.api.splashReady() when it sees the
+  //     ready state.
+  //   ts mode — there is NO sidecar. The renderer is the runtime; the
+  //     splash itself calls modelLoader.loadAll() and fires splashReady
+  //     when all models finish.
+  // Either way main listens on a single 'splash:ready' IPC channel and
+  // swaps in the main window.
   const splash = new BrowserWindow({
     width: 560,
     height: 520,
@@ -333,11 +354,9 @@ async function createWindow() {
   splash.webContents.on('will-navigate', (e) => e.preventDefault());
   splash.once('ready-to-show', () => splash.show());
 
-  // The IPC receiver flips from splash → main when the splash closes.
-  // We keep the /api/status poll running forever (not just for the
-  // splash window) so the main window's StatusBar shows live state.
-  // The receiver is captured by closure — both subscribers read it on
-  // every event so the switch happens naturally without resubscribing.
+  // Sidecar status forwarding (python mode only — ts mode never produces
+  // these events). Captured by closure so the receiver flips from splash
+  // → main when the splash closes, with no need to re-subscribe.
   let activeReceiver: BrowserWindow = splash;
   const send = (channel: string, payload: unknown) => {
     if (activeReceiver && !activeReceiver.isDestroyed()) {
@@ -345,61 +364,72 @@ async function createWindow() {
     }
   };
   const offLog = sidecar.addLogSubscriber((line) => send('sidecar:log', line));
-  let mainWin: BrowserWindow | null = null;
-  let dismissed = false;
   const offStatus = sidecar.addStatusSubscriber((snap: any) => {
     send('sidecar:status', snap);
-    if (snap?.all_ready && !dismissed) {
-      dismissed = true;
-      // Tiny grace period so the splash can render the "Ready." state
-      // for a beat before swapping out — avoids a jarring instant flip.
-      setTimeout(() => {
-        if (splash.isDestroyed()) return;
-        mainWin = createMainWindow();
-        setPanelActionSink((a) => {
-          if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('panel:action', a);
-          if (a && a.type === 'select-clip' && mainWin && !mainWin.isDestroyed()) {
-            if (mainWin.isMinimized()) mainWin.restore();
-            mainWin.show();
-            mainWin.focus();
-          }
-        });
-        loadMainWindow(mainWin).catch((e) => console.error('[main] main window load failed:', e));
-        splash.close();
-        // Switch the IPC target to the main window. Subscribers stay
-        // registered; status polling keeps running so the StatusBar in
-        // the main window reflects any future model reload / status
-        // change (e.g. if the sidecar goes down and comes back).
-        activeReceiver = mainWin;
-      }, 400);
-    }
   });
 
-  // Load splash HTML first so the window has SOMETHING to show while
-  // uvicorn is still booting.
+  // Load splash HTML first so the user sees SOMETHING immediately. In
+  // python mode this lets us overlap the splash paint with the
+  // sidecar's slow uvicorn boot.
   if (process.env.ELECTRON_RENDERER_URL) {
     await splash.loadURL(`${process.env.ELECTRON_RENDERER_URL}/splash.html`);
   } else {
     await splash.loadFile(join(__dirname, '..', 'renderer', 'splash.html'));
   }
 
-  // Now spawn the sidecar. Warmup runs INSIDE the sidecar before
-  // SWING_SERVICE_URL is printed, so /api/status will return
-  // all_ready the moment the URL is parsed.
-  try {
-    await sidecar.start();
-  } catch (e) {
-    // Surface the failure both in the splash log and via a native dialog
-    // so the user actually notices before the splash auto-closes.
-    if (!splash.isDestroyed()) {
-      splash.webContents.send('sidecar:log', `[error] ${String(e)}`);
+  // python mode: spawn the sidecar now. Warmup runs INSIDE the sidecar
+  // before SWING_SERVICE_URL prints, so /api/status returns all_ready
+  // the moment the URL is parsed by Electron. The splash sees that and
+  // fires splashReady. Errors surface both to the splash (via the
+  // existing stderr → sidecar:log forward) and via a native dialog.
+  if (BACKEND_MODE === 'python') {
+    try {
+      await sidecar.start();
+    } catch (e) {
+      if (!splash.isDestroyed()) {
+        splash.webContents.send('sidecar:log', `[error] ${String(e)}`);
+      }
+      const { dialog: dlg } = await import('electron');
+      dlg.showErrorBox('sidecar 启动失败', String(e));
+      app.quit();
+      return;
     }
-    const { dialog: dlg } = await import('electron');
-    dlg.showErrorBox('sidecar 启动失败', String(e));
-    app.quit();
-    return;
+    sidecar.startStatusPolling(500);
   }
-  sidecar.startStatusPolling(500);
+  // ts mode: nothing to start — renderer does all loading.
+
+  // Wait for the splash renderer to declare itself ready. The splash
+  // owns the readiness decision (it knows the mode and which readiness
+  // source applies). Main is just the swap-in handler.
+  await new Promise<void>((resolve) => {
+    const onReady = () => resolve();
+    ipcMain.once('splash:ready', onReady);
+  });
+  // From this point on the splash is going away. Stop forwarding sidecar
+  // events to it (its webContents are about to be torn down).
+  offLog();
+  offStatus();
+
+  // Swap in the main window.
+  const mainWin = createMainWindow();
+  setPanelActionSink((a) => {
+    if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('panel:action', a);
+    if (a && a.type === 'select-clip' && mainWin && !mainWin.isDestroyed()) {
+      if (mainWin.isMinimized()) mainWin.restore();
+      mainWin.show();
+      mainWin.focus();
+    }
+  });
+  // Redirect any further sidecar events to the main window. python
+  // mode's polling is still running; ts mode has no events to forward.
+  activeReceiver = mainWin;
+  if (!splash.isDestroyed()) splash.close();
+
+  try {
+    await loadMainWindow(mainWin);
+  } catch (e) {
+    console.error('[main] main window load failed:', e);
+  }
 }
 
 function createMainWindow(): BrowserWindow {
@@ -437,6 +467,12 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => { busy.cancelAllInflight(); sidecar.kill(); closeAllPanels(); });
+
+// ── Backend-mode IPC ────────────────────────────────────────────────────
+// Renderer reads this once on mount to branch its UI (Python flow vs TS
+// placeholder). Constant for the lifetime of the process — set at
+// import time from SWING_BACKEND env var.
+ipcMain.handle('get-backend-mode', () => BACKEND_MODE);
 app.on('activate', () => {
   applyDockIcon(); // macOS can re-pool the Dock icon after relaunch
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -486,6 +522,8 @@ ipcMain.handle('pick-video', async () => {
 });
 
 ipcMain.handle('get-service-info', () => sidecar.baseUrl());
+// In ts mode the sidecar was never started, so baseUrl stays null.
+// Renderer's SwingClient handles null gracefully (button disabled).
 
 // ── Settings: jobs output dir ─────────────────────────────────────
 // The Settings panel reads/writes via these. `set-output-dir` accepts a
@@ -695,7 +733,7 @@ ipcMain.handle('cleanup-clips', async (_evt, payload: { jobId: string }, callId:
   try {
     if (ac.signal.aborted) return { ok: false, error: 'cancelled' };
     const baseUrl = sidecar.baseUrl();
-    if (!baseUrl) return { ok: false, error: 'sidecar not ready' };
+    if (!baseUrl) return { ok: false, error: BACKEND_MODE === 'ts' ? 'sidecar disabled (ts mode)' : 'sidecar not ready' };
     const res = await fetch(`${baseUrl}/api/jobs/${encodeURIComponent(jobId)}`, {
       method: 'DELETE',
       signal: ac.signal,
