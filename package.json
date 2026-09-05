@@ -125,6 +125,10 @@
       "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
       "extraResources": [
         {
+          "from": "build/icon.png",
+          "to": "build/icon.png"
+        },
+        {
           "from": "backend/dist",
           "to": "backend",
           "filter": [

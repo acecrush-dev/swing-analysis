@@ -183,12 +183,25 @@ proc.on('exit', (code) => {
     console.error(`[bundle:py] expected output missing: ${bundleExeInside}`);
     process.exit(2);
   }
+  // PyInstaller 6.x just WARNS when a --collect-all target isn't installed
+  // (silent fallback → no fail → ships a stripped bundle that crashes at
+  // runtime with `ModuleNotFoundError: No module named 'uvicorn'`). The
+  // sizes below are the smoking gun: a real bundle with mediapipe +
+  // onnxruntime + imageio_ffmpeg is ~250–400 MiB on macOS arm64. Anything
+  // under ~30 MiB means a heavy dep got skipped — refuse to declare OK.
+  const sizeMiB = onedir
+    ? dirSizeBytes(bundleOut) / 1024 / 1024
+    : statSync(bundleExeInside).size / 1024 / 1024;
+  if (sizeMiB < 30) {
+    console.error(`[bundle:py] bundle is suspiciously small (${sizeMiB.toFixed(1)} MiB) — likely a missing --collect-all target.`);
+    console.error(`[bundle:py] Run:  ${py} -m pip install -r backend/requirements.txt`);
+    console.error(`[bundle:py] Then re-run this script.`);
+    process.exit(4);
+  }
   if (onedir) {
-    const sizeBytes = dirSizeBytes(bundleOut);
-    console.log(`[bundle:py] ok — ${bundleOut}/ (${(sizeBytes / 1024 / 1024).toFixed(1)} MiB tree) in ${((Date.now() - start) / 1000).toFixed(1)}s`);
+    console.log(`[bundle:py] ok — ${bundleOut}/ (${sizeMiB.toFixed(1)} MiB tree) in ${((Date.now() - start) / 1000).toFixed(1)}s`);
   } else {
-    const sizeBytes = statSync(bundleExeInside).size;
-    console.log(`[bundle:py] ok — ${bundleExeInside} (${(sizeBytes / 1024 / 1024).toFixed(1)} MiB) in ${((Date.now() - start) / 1000).toFixed(1)}s`);
+    console.log(`[bundle:py] ok — ${bundleExeInside} (${sizeMiB.toFixed(1)} MiB) in ${((Date.now() - start) / 1000).toFixed(1)}s`);
   }
   console.log('[bundle:py] Next: `npm run pack:<platform>` will pick this up via extraResources.');
 });
