@@ -137,8 +137,16 @@ function makeTennisBallTexture(): THREE.CanvasTexture {
     ctx.shadowBlur = 0;
     ctx.shadowOffsetY = 0;
   };
-  // Two seams, 180° apart in longitude, both bowing OUTWARD.
+  // Two seam LOOPS, 180° apart in longitude — one wrapping the front of
+  // the ball (baseU 0), one the back (baseU 0.5). Each loop is made of
+  // TWO mirrored meridian halves (direction +1 / -1) that cross at both
+  // poles, exactly like the stitched seam of a real tennis ball: viewed
+  // from any angle you see the symmetric "()" pair bowing away from a
+  // central lens-shaped panel. (The previous version drew only one half
+  // of each loop — the ball looked like it was missing half its seam.)
   drawSeam(0.0, 0.12, +1);
+  drawSeam(0.0, 0.12, -1);
+  drawSeam(0.5, 0.12, +1);
   drawSeam(0.5, 0.12, -1);
 
   // Small white highlight at the "12 o'clock" position where the two

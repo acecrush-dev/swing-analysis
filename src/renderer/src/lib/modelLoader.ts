@@ -27,29 +27,60 @@
  */
 import * as ort from 'onnxruntime-web';
 import { PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
+// Explicit `?url` imports make Vite emit the ORT runtime binaries as
+// assets and hand us their runtime URLs — in dev they point at the
+// served node_modules file, in the packaged build at ./assets/*. Both
+// work offline; nothing is fetched from a CDN. (The sub-paths are
+// exported by the package's exports map WITHOUT the dist/ prefix; the
+// assetFileNames override in electron.vite.config.ts keeps the emitted
+// filenames stable/unhashed.)
+import ortMjsUrl from 'onnxruntime-web/ort-wasm-simd-threaded.jsep.mjs?url';
+import ortWasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.jsep.wasm?url';
 
-// Point onnxruntime-web at the local /assets/ort-wasm.wasm rather
-// than its default CDN. Without this, ORT tries to fetch
-// `https://cdn.jsdelivr.net/...ort-wasm-simd-threaded.jsep.wasm`,
-// which is blocked or unreachable in sandboxed / offline Electron
-// environments. We bundle the wasm via the renderer build (see
-// electron.vite.config.ts assetFileNames), so /assets/ort-wasm.wasm
-// is always available.
-ort.env.wasm.wasmPaths = new URL('/assets/', window.location.href).toString();
+// ── Asset URL resolution ──────────────────────────────────────────────────
+// Every runtime asset URL MUST be resolved against `document.baseURI`,
+// never written as a root-absolute "/assets/..." path. The packaged app
+// loads its renderer via `file://` (see loadMainWindow → loadFile); on a
+// file:// page a root-absolute path resolves to `file:///assets/...`
+// (filesystem root) and fetch() rejects it — every model would fail with
+// "Failed to fetch". Document-relative URLs work in BOTH dev (vite dev
+// server serves public/ at the origin root) and packaged (public/ is
+// copied next to index.html, so ./assets/... is a real sibling).
+// Verified empirically on Electron 44: relative file:// fetch → 200,
+// root-absolute → "Failed to fetch".
+const ASSETS_BASE = new URL('assets/', document.baseURI);
+
+// ORT resolves its loader module and wasm binary through wasmPaths. The
+// object form pins BOTH files explicitly: the .mjs is dynamically
+// imported by ORT, and the .wasm is located via locateFile(). Resolved
+// against document.baseURI so they work under file:// too.
+ort.env.wasm.wasmPaths = {
+  mjs: new URL(ortMjsUrl, document.baseURI).href,
+  wasm: new URL(ortWasmUrl, document.baseURI).href,
+};
 
 export type ModelName = 'rtmdet' | 'rtmpose' | 'mediapipe';
 export type ModelState = 'pending' | 'loading' | 'ready' | 'failed';
 
 interface ModelPaths {
-  /** URL or relative path Vite serves to the renderer at runtime. */
+  /** Absolute runtime URL (resolved against document.baseURI). */
   url: string;
 }
 
 const PATHS: Record<ModelName, ModelPaths> = {
-  rtmdet:    { url: '/assets/models/rtmdet-m-487628.onnx' },
-  rtmpose:   { url: '/assets/models/rtmpose-m-27c0e6.onnx' },
-  mediapipe: { url: '/assets/models/pose_landmarker_lite.task' },
+  rtmdet:    { url: new URL('models/rtmdet-m-487628.onnx', ASSETS_BASE).toString() },
+  rtmpose:   { url: new URL('models/rtmpose-m-27c0e6.onnx', ASSETS_BASE).toString() },
+  mediapipe: { url: new URL('models/pose_landmarker_lite.task', ASSETS_BASE).toString() },
 };
+
+// MediaPipe's wasm glue + binary, self-hosted from public/assets/
+// mediapipe-wasm/ (copied from node_modules/@mediapipe/tasks-vision/wasm
+// — see that directory's README). A CDN is not an option: the app's CSP
+// only allows connect-src 'self' + 127.0.0.1, and the app must work
+// offline anyway. FilesetResolver.forVisionTasks appends the literal
+// filenames `vision_wasm[_module|_nosimd]_internal.{js,wasm}` to this
+// base, so all six dist files must exist there.
+const MEDIAPIPE_WASM_BASE = new URL('mediapipe-wasm/', ASSETS_BASE).toString();
 
 // ── State ──────────────────────────────────────────────────────────────────
 interface ModelEntry {
@@ -84,6 +115,12 @@ function notify() {
 
 function setState(name: ModelName, patch: Partial<ModelEntry>) {
   _state[name] = { ..._state[name], ...patch };
+  // One console line per transition — the ts-mode pipeline has no
+  // sidecar stderr to grep, so this is the primary diagnostics trail
+  // (visible via ELECTRON_ENABLE_LOGGING=1 and devtools).
+  const e = _state[name];
+  const detail = e.error ? ` — ${e.error}` : e.bytes ? ` (${(e.bytes / 1048576).toFixed(1)} MB)` : '';
+  console.info(`[modelLoader] ${name}: ${e.state}${detail}`);
   notify();
 }
 
@@ -126,7 +163,7 @@ async function probeSize(url: string, minBytes = 256 * 1024): Promise<number> {
         const r = await fetch(url, { headers: { Range: 'bytes=0-15' } });
         if (r.ok) {
           const buf = await r.arrayBuffer();
-          if (buf.byteLength >= 1) return minBytes + 1;  // sentinel: pass check
+          if (buf.byteLength >= 1) return 0;  // pass — a range probe can't know the real size; report unknown rather than a fake number
         }
       }
     }
@@ -229,7 +266,7 @@ async function loadRtmdet(): Promise<void> {
       executionProviders: ['wasm'],
     });
     await _dummyOnnxRun(session, RTMDET_INPUT_SHAPE);
-    setState('rtmdet', { state: 'ready', runner: session, bytes });
+    setState('rtmdet', { state: 'ready', runner: session, bytes: bytes || undefined });
   } catch (e) {
     setState('rtmdet', { state: 'failed', error: errToString(e) });
   }
@@ -245,28 +282,27 @@ async function loadRtmpose(): Promise<void> {
       executionProviders: ['wasm'],
     });
     await _dummyOnnxRun(session, RTMPOSE_INPUT_SHAPE);
-    setState('rtmpose', { state: 'ready', runner: session, bytes });
+    setState('rtmpose', { state: 'ready', runner: session, bytes: bytes || undefined });
   } catch (e) {
     setState('rtmpose', { state: 'failed', error: errToString(e) });
   }
 }
 
 // ── MediaPipe loader ──────────────────────────────────────────────────────
-// MediaPipe's Tasks Vision needs its wasm bundle from a CDN (or self-hosted
-// under /assets/ — for Phase 2 we use the official jsdelivr CDN). It also
-// needs an ImageBitmap-capable HTMLCanvasElement for the GPU delegate.
+// MediaPipe's Tasks Vision needs its wasm bundle (loader JS + binary).
+// It is self-hosted under public/assets/mediapipe-wasm/ (see the README
+// there — the files are copied from the pinned @mediapipe/tasks-vision
+// version). A CDN is not usable here: the app CSP only allows
+// connect-src 'self' + localhost, and packaged mode must work offline.
+// It also needs an ImageBitmap-capable HTMLCanvasElement for the GPU
+// delegate.
 async function loadMediapipe(): Promise<void> {
   if (_state.mediapipe.state === 'ready') return;
   setState('mediapipe', { state: 'loading' });
   try {
     const url = PATHS.mediapipe.url;
     const bytes = await probeSize(url, 256 * 1024);
-    const fileset = await FilesetResolver.forVisionTasks(
-      // jsdelivr serves the wasm/js bundle. Pin the version so a
-      // upstream change can't break us; align with the npm version
-      // declared in package.json (@mediapipe/tasks-vision).
-      'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm'
-    );
+    const fileset = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_BASE);
     const landmarker = await PoseLandmarker.createFromOptions(fileset, {
       baseOptions: {
         modelAssetPath: url,
@@ -276,7 +312,7 @@ async function loadMediapipe(): Promise<void> {
       runningMode: 'VIDEO',
       numPoses: 1,
     });
-    setState('mediapipe', { state: 'ready', runner: landmarker, bytes });
+    setState('mediapipe', { state: 'ready', runner: landmarker, bytes: bytes || undefined });
   } catch (e) {
     setState('mediapipe', { state: 'failed', error: errToString(e) });
   }
