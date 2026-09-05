@@ -28,7 +28,7 @@ function run(file, args) {
 // 1. Master 1024×1024 PNG (Linux + general source)
 if (!existsSync(buildDir)) mkdirSync(buildDir, { recursive: true });
 run('magick', [source, '-background', 'none', '-resize', '1024x1024',
-              resolve(buildDir, 'icon.png')]);
+              '-strip', resolve(buildDir, 'icon.png')]);
 
 // 2. Multi-res Windows .ico
 const icoSizes = [16, 24, 32, 48, 64, 128, 256];
@@ -44,7 +44,7 @@ if (process.platform === 'darwin') {
   const sizes = [16, 32, 64, 128, 256, 512, 1024];
   for (const s of sizes) {
     run('magick', [source, '-background', 'none', '-resize', `${s}x${s}`,
-                   resolve(iconsetDir, `icon_${s}x${s}.png`)]);
+                   '-strip', resolve(iconsetDir, `icon_${s}x${s}.png`)]);
   }
   // retina @2x variants
   const clones = [
@@ -64,8 +64,8 @@ if (process.platform === 'darwin') {
 const pubDir = resolve(root, 'src/renderer/public');
 if (!existsSync(pubDir)) mkdirSync(pubDir, { recursive: true });
 run('magick', [source, '-background', 'none', '-resize', '32x32',
-               resolve(pubDir, 'favicon.png')]);
+               '-strip', resolve(pubDir, 'favicon.png')]);
 run('magick', [source, '-background', 'none', '-resize', '256x256',
-               resolve(pubDir, 'favicon-256.png')]);
+               '-strip', resolve(pubDir, 'favicon-256.png')]);
 
 console.log('[icons] done.');
