@@ -501,10 +501,13 @@ async function createWindow() {
     const onReady = () => resolve();
     ipcMain.once('splash:ready', onReady);
   });
-  // From this point on the splash is going away. Stop forwarding sidecar
-  // events to it (its webContents are about to be torn down).
-  offLog();
-  offStatus();
+  // From this point on the splash is going away. NOTE: do NOT unsubscribe
+  // the sidecar log/status forwarders here — `send()` targets
+  // `activeReceiver`, which flips to the main window below. Removing the
+  // subscribers here (the old behaviour) silently killed the
+  // sidecar:status stream for the rest of the app lifetime, so the main
+  // window's StatusBar never saw model-ready events and its dots stayed
+  // grey on "warming up" forever.
 
   // Swap in the main window.
   const mainWin = createMainWindow();
@@ -621,6 +624,25 @@ ipcMain.handle('pick-video', async () => {
 ipcMain.handle('get-service-info', () => sidecar.baseUrl());
 // In ts mode the sidecar was never started, so baseUrl stays null.
 // Renderer's SwingClient handles null gracefully (button disabled).
+
+// Model file sizes for the StatusBar. The sidecar's /api/status carries
+// model STATE but not sizes, while the ts mode's loader sees the files
+// directly — this IPC gives python mode the same display parity without
+// touching the backend. Read-only stat over MODELS_DIR.
+ipcMain.handle('get-model-sizes', () => {
+  try {
+    const out: Record<string, number> = {};
+    for (const name of readdirSync(MODELS_DIR)) {
+      try {
+        const st = statSync(join(MODELS_DIR, name));
+        if (st.isFile()) out[name] = st.size;
+      } catch { /* raced deletion — skip this entry */ }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+});
 
 // ── Settings: jobs output dir ─────────────────────────────────────
 // The Settings panel reads/writes via these. `set-output-dir` accepts a

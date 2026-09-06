@@ -139,8 +139,14 @@ export async function populateWristFramesLive(
   video.pause();
   video.muted = true;
   video.playsInline = true;
-  video.currentTime = 0;
-  await waitForSeeked(video);
+  // The runner hands us a freshly-loaded video already parked at 0 —
+  // assigning currentTime=0 there fires NO seeked event in Chromium and
+  // the await below would hang forever (seen as "Start does nothing").
+  // Only seek when we're actually somewhere else.
+  if (video.currentTime !== 0) {
+    video.currentTime = 0;
+    await waitForSeeked(video);
+  }
 
   let next = 0;
   let cancelled = false;
@@ -194,7 +200,21 @@ export async function populateWristFramesLive(
 
 function waitForSeeked(video: HTMLVideoElement): Promise<void> {
   return new Promise((resolve) => {
-    const onSeeked = () => { video.removeEventListener('seeked', onSeeked); resolve(); };
+    // Never hang: same-position assignments fire no `seeked` event, and
+    // a stalled media element might not either — bail out after 3 s and
+    // let the pipeline continue with whatever frame is on screen.
+    const timer = setTimeout(() => { cleanup(); resolve(); }, 3000);
+    const onSeeked = () => { cleanup(); resolve(); };
+    const cleanup = () => {
+      clearTimeout(timer);
+      video.removeEventListener('seeked', onSeeked);
+    };
     video.addEventListener('seeked', onSeeked);
+    // Not actually seeking (e.g. target == current position) → resolve
+    // on the next microtask instead of waiting for an event that will
+    // never come.
+    queueMicrotask(() => {
+      if (!video.seeking) { cleanup(); resolve(); }
+    });
   });
 }

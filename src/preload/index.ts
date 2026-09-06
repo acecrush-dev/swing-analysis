@@ -118,4 +118,10 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('sidecar:status', handler);
     return () => ipcRenderer.removeListener('sidecar:status', handler);
   },
+
+  // Model file sizes (bytes) keyed by filename, e.g.
+  // { 'rtmdet-m-487628.onnx': 109477532, ... } — lets the python-mode
+  // StatusBar show the same size hints the ts mode's loader reports.
+  getModelSizes: (): Promise<Record<string, number>> =>
+    ipcRenderer.invoke('get-model-sizes'),
 });

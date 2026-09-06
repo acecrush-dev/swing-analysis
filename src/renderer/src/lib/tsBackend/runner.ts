@@ -89,13 +89,23 @@ export class TsRunner {
     this.ac = new AbortController();
     const signal = this.ac.signal;
 
-    // Offscreen video element — the pipeline seeks/detects on it; nothing
-    // attaches it to the DOM (mediapipe only needs decoded frames).
+    // Offscreen video element — the pipeline seeks/detects on it. It MUST
+    // stay in the render tree (1px, off-screen, near-transparent) but
+    // never `display: none`: requestVideoFrameCallback only fires for
+    // elements that participate in composition, so a display:none video
+    // would freeze the live-detection pass with zero callbacks.
     const video = document.createElement('video');
     video.muted = true;
     video.playsInline = true;
     video.src = mediaUrl(videoPath);
-    video.style.display = 'none';
+    video.style.position = 'fixed';
+    video.style.left = '-9999px';
+    video.style.top = '0';
+    video.style.width = '2px';
+    video.style.height = '2px';
+    video.style.opacity = '0.01';
+    video.style.pointerEvents = 'none';
+    video.style.zIndex = '-1';
     document.body.appendChild(video);
 
     let segmentsEmitted = 0;

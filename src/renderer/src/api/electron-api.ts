@@ -73,6 +73,10 @@ declare global {
       // unsubscribe fn (mirrors the panel-state listeners above).
       onSidecarLog: (cb: (line: string) => void) => () => void;
       onSidecarStatus: (cb: (snap: unknown) => void) => () => void;
+
+      // Model file sizes (bytes) keyed by filename — python-mode StatusBar
+      // size hints (ts mode gets the same numbers from its own loader).
+      getModelSizes: () => Promise<Record<string, number>>;
     };
   }
 }
