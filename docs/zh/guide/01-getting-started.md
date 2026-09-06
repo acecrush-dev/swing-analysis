@@ -141,6 +141,30 @@ npm run pack:linux  # Linux AppImage + .deb (要在 Linux 上跑)
 
 跨平台矩阵与代码签名 / 公证见 [08 · Build & Package](08-build-package.md)。
 
+## 7. 后端模式 (`SWING_BACKEND`)
+
+GUI 内置两个可互换的分析后端,两者驱动**同一个主窗口**——区别只是几处
+状态提示,以及哪些参数生效。
+
+```bash
+SWING_BACKEND=python npm run dev   # 默认 —— Python sidecar
+SWING_BACKEND=ts     npm run dev   # renderer 内 WASM 管线
+```
+
+| | `python` (默认) | `ts` |
+| --- | --- | --- |
+| 引擎 | Python sidecar (uvicorn + ONNX / MediaPipe) | renderer 内 WASM (onnxruntime-web + MediaPipe Tasks) |
+| 主界面 | 同一套统一界面 | 同一套统一界面 |
+| Clips / viz | 落盘到 job 目录 | 内存持有——点 clip 卡片即播,动作条链接下载 |
+| `segments.json` | `backend/data/jobs/<id>/segments.json` | 动作条下载链接 |
+| Export Package · 打开输出目录 · 清空输出目录 | 可用 | 隐藏 (不存在 job 目录) |
+| 参数 | 全部生效 | `v_swing` / `max_bridge` / `max_lost_frames` 与 clip 标注区置灰 (ⓘ)——ts 暂无对应实现 |
+| 状态栏 | sidecar 预热 + 逐模型加载 | 逐模型 WASM 加载 |
+
+`ts` 模式已知限制:分析速度约为 1× 播放速度 (60 秒视频约需 1 分钟);
+源超过 1.5 GB 时跳过 clip 切出 (内存编码器护栏);无 job 持久化——
+重置或关闭窗口即清空。
+
 ## 产物都去哪了?
 
 | 路径 | 内容 |

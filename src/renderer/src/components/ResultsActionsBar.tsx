@@ -22,6 +22,14 @@ interface Props {
   onOpenDir: (jobId: string) => void;
   onExportPackage: () => void;
   onDeleteJob: () => void;
+  // ── plan 008 M4 — ts mode: no sidecar, no job directory ───────────
+  // 📁 / 📦 / 🗑 are sidecar-disk operations and stay hidden; the
+  // segments.json / viz downloads come from in-memory blob URLs.
+  backendMode?: 'python' | 'ts';
+  /** ts: blob URL of the in-memory segments.json. */
+  segmentsJsonHref?: string;
+  /** ts: blob URL + actual container of the in-memory viz. */
+  vizDownload?: { href: string; extension: string } | null;
 }
 
 // Visually identical to ResultsPanel's old footer — same ICON_BTN
@@ -41,17 +49,23 @@ const ICON_BTN: React.CSSProperties = {
   lineHeight: 1,
 };
 
+const DL_LINK: React.CSSProperties = { color: 'var(--link)', fontSize: 11 };
+
 export function ResultsActionsBar({
   client, jobId, vizMode, onToggleViz,
   vizAvailable, vizH264Available, segmentsJsonAvailable,
   onOpenDir, onExportPackage, onDeleteJob,
+  backendMode, segmentsJsonHref, vizDownload,
 }: Props) {
   const { t } = useI18n();
+  const isTs = backendMode === 'ts';
   const hasJob = !!jobId;
   // Gate the button on H.264 availability — viz.mp4 alone is a valid
   // download but Chromium cannot play the cv2-written mp4v codec,
   // so a viz.mp4-only state would be grey-on-but-actually-broken.
-  const vizPlayable = vizAvailable && vizH264Available;
+  // ts mode's viz is recorder-produced (mp4/webm) and always playable
+  // when present, so the H.264 twin concept doesn't apply there.
+  const vizPlayable = isTs ? vizAvailable : (vizAvailable && vizH264Available);
   return (
     <div style={{
       display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center',
@@ -77,57 +91,70 @@ export function ResultsActionsBar({
           {vizMode ? '◼' : '🎬'}
         </button>
       </Tooltip>
-      {client && jobId && (
+      {isTs ? (
         <>
-          {segmentsJsonAvailable && (
-            <a href={client.artifactUrl(jobId, 'segments.json')} download
-               style={{ color: 'var(--link)', fontSize: 11 }}>{t('dl.segments')}</a>
+          {segmentsJsonAvailable && segmentsJsonHref && (
+            <a href={segmentsJsonHref} download="segments.json" style={DL_LINK}>{t('dl.segments')}</a>
           )}
-          {vizAvailable && (
-            <a href={client.artifactUrl(jobId, 'viz.mp4')} download
-               style={{ color: 'var(--link)', fontSize: 11 }}>{t('dl.viz')}</a>
+          {vizAvailable && vizDownload && (
+            <a href={vizDownload.href} download={`viz.${vizDownload.extension}`} style={DL_LINK}>{t('dl.viz')}</a>
           )}
         </>
+      ) : (
+        <>
+          {client && jobId && (
+            <>
+              {segmentsJsonAvailable && (
+                <a href={client.artifactUrl(jobId, 'segments.json')} download
+                   style={DL_LINK}>{t('dl.segments')}</a>
+              )}
+              {vizAvailable && (
+                <a href={client.artifactUrl(jobId, 'viz.mp4')} download
+                   style={DL_LINK}>{t('dl.viz')}</a>
+              )}
+            </>
+          )}
+          {jobId && (
+            <Tooltip text={t('btn.openDir')}>
+              <button
+                onClick={() => onOpenDir(jobId)}
+                style={ICON_BTN}
+              >
+                📁
+              </button>
+            </Tooltip>
+          )}
+          <Tooltip text={hasJob ? t('btn.export.title') : t('btn.export.disabled')}>
+            <button
+              onClick={onExportPackage}
+              disabled={!hasJob}
+              style={{
+                ...ICON_BTN,
+                marginLeft: 'auto',
+                color: hasJob ? 'var(--text)' : 'var(--text-dim)',
+                cursor: hasJob ? 'pointer' : 'default',
+              }}
+            >
+              📦
+            </button>
+          </Tooltip>
+          <Tooltip text={hasJob ? t('btn.deleteJob.title') : t('btn.deleteJob.disabled')}>
+            <button
+              onClick={onDeleteJob}
+              disabled={!hasJob}
+              style={{
+                ...ICON_BTN,
+                background: hasJob ? 'var(--danger-bg)' : 'transparent',
+                color: hasJob ? 'var(--danger)' : 'var(--text-dim)',
+                border: '1px solid ' + (hasJob ? 'var(--danger-border)' : 'var(--border)'),
+                cursor: hasJob ? 'pointer' : 'default',
+              }}
+            >
+              🗑
+            </button>
+          </Tooltip>
+        </>
       )}
-      {jobId && (
-        <Tooltip text={t('btn.openDir')}>
-          <button
-            onClick={() => onOpenDir(jobId)}
-            style={ICON_BTN}
-          >
-            📁
-          </button>
-        </Tooltip>
-      )}
-      <Tooltip text={hasJob ? t('btn.export.title') : t('btn.export.disabled')}>
-        <button
-          onClick={onExportPackage}
-          disabled={!hasJob}
-          style={{
-            ...ICON_BTN,
-            marginLeft: 'auto',
-            color: hasJob ? 'var(--text)' : 'var(--text-dim)',
-            cursor: hasJob ? 'pointer' : 'default',
-          }}
-        >
-          📦
-        </button>
-      </Tooltip>
-      <Tooltip text={hasJob ? t('btn.deleteJob.title') : t('btn.deleteJob.disabled')}>
-        <button
-          onClick={onDeleteJob}
-          disabled={!hasJob}
-          style={{
-            ...ICON_BTN,
-            background: hasJob ? 'var(--danger-bg)' : 'transparent',
-            color: hasJob ? 'var(--danger)' : 'var(--text-dim)',
-            border: '1px solid ' + (hasJob ? 'var(--danger-border)' : 'var(--border)'),
-            cursor: hasJob ? 'pointer' : 'default',
-          }}
-        >
-          🗑
-        </button>
-      </Tooltip>
     </div>
   );
 }

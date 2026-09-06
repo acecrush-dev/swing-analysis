@@ -19,7 +19,8 @@ import { useI18n, toggleLocale, getLocale } from './i18n';
 import * as busy from './busy';
 import type { BusyState } from './busy';
 import { StatusBar } from './components/StatusBar';
-import { TsPipelinePanel } from './components/TsPipelinePanel';
+import { TsRunner } from './lib/tsBackend/runner';
+import { mediaUrl } from './lib/mediaUrl';
 import './api/electron-api';
 
 // Allowed video extensions (kept in sync with the dialog filter on the
@@ -94,6 +95,20 @@ export default function App() {
   // of the original video / a clip. Set when the user clicks the
   // "🎬 可视化完整视频" button in the right-panel footer.
   const [vizMode, setVizMode] = useState(false);
+  // plan 008 M3 — ts mode: blob URL of the runner-rendered viz (revoked
+  // on reset / new run). python mode keeps using the sidecar's
+  // viz_h264.mp4 artifact URL and never touches this.
+  const [vizBlobUrl, setVizBlobUrl] = useState<string | null>(null);
+  // plan 008 M4 — actual container of the recorder output (mp4 preferred,
+  // webm fallback) so the download filename matches reality.
+  const [vizExt, setVizExt] = useState<'mp4' | 'webm'>('mp4');
+  // plan 008 M4 — ts mode: blob URL for the in-memory segments.json
+  // download (ResultsActionsBar renders it as a plain <a download>).
+  const [segmentsJsonHref, setSegmentsJsonHref] = useState<string | null>(null);
+  // plan 008 M3 — one runner instance for the component lifetime; it
+  // creates/tears down its own offscreen <video> per run.
+  const tsRunnerRef = useRef<TsRunner | null>(null);
+  if (!tsRunnerRef.current) tsRunnerRef.current = new TsRunner();
   // Help overlay (plan 002 M22)
   const [helpOpen, setHelpOpen] = useState(false);
   // Settings overlay — owns the four annotation colours. Persisted to
@@ -171,6 +186,9 @@ export default function App() {
       try {
         const mode = await window.api.getBackendMode();
         setBackendMode(mode);
+        // ts mode has no sidecar — skip the service-info IPC entirely
+        // (baseUrl stays null; the unified UI branches on backendMode).
+        if (mode === 'ts') return;
         const url = await window.api.getServiceInfo();
         setBaseUrl(url);
       } catch (e: any) {
@@ -277,8 +295,88 @@ export default function App() {
     // 'closed' is handled inside usePanelSync itself (panelOpen flag).
   });
 
+  // ── Shared event appliers (plan 008 M3) ────────────────────────────
+  // One function per pipeline event; BOTH backends funnel through them.
+  // python: the SwingClient WS handler calls these with parsed payloads.
+  // ts: the TsRunner handlers call them with same-shaped objects —
+  // see lib/tsBackend/runner.ts for the shape contract. The bodies are
+  // the pre-008 WS-handler branches verbatim, so python behaviour is
+  // unchanged by construction.
+  const applyProgress = (p: { frames: number; total: number; fps: number; eta_sec: number | null; segments_emitted: number }) => {
+    setProgress({
+      frames: p.frames,
+      total: p.total ?? 0,
+      fps: typeof p.fps === 'number' ? p.fps : 0,
+      eta_sec: p.eta_sec ?? null,
+      segments_emitted: p.segments_emitted ?? 0,
+    });
+    if (typeof p.fps === 'number' && typeof p.frames === 'number'
+        && (p.frames % 50 === 0 || p.frames === p.total)) {
+      pushLog(t('status.poseProgress', {
+        frames: p.frames, total: p.total,
+        fps: p.fps.toFixed(1), emit: p.segments_emitted ?? 0,
+      }));
+    }
+  };
+
+  const applySegmentEmitted = (seg: Segment) => {
+    if (!seg) return;
+    setSegments((s) => [...s, seg]);
+    pushLog(t('status.segmentEmitted', {
+      id: seg.seg_id,
+      start: seg.start_timecode ?? '?',
+      end: seg.end_timecode ?? '?',
+      contact: seg.contact_timecode ?? '?',
+    }));
+  };
+
+  const applyClipGenerated = (info: ClipInfo) => {
+    if (info.seg_id > 0) {
+      setClips((prev) => {
+        if (prev.some((c) => c.seg_id === info.seg_id)) return prev;
+        return [...prev, info];
+      });
+      pushLog(t('status.clipGenerated', {
+        id: info.seg_id,
+        h264: info.playable ? t('status.h264Yes') : t('status.h264No'),
+      }));
+    }
+    // plan 003 — clip is fully done (extracted + annotated + H.264
+    // attempted); drop its inner progress bar.
+    setClipProc((prev) => {
+      if (!(info.seg_id in prev)) return prev;
+      const next = { ...prev };
+      delete next[info.seg_id];
+      return next;
+    });
+  };
+
+  const applyJobCompleted = (segmentCount: number | string) => {
+    setJobState('done');
+    setClipProc({});
+    pushLog(t('status.jobDone', { n: segmentCount ?? '?' }));
+    toast.success(t('toast.jobDone', { n: segmentCount ?? '?' }));
+  };
+
+  const applyJobFailed = (msg: string) => {
+    setJobState('failed');
+    setClipProc({});
+    const m = String(msg ?? 'unknown');
+    setError(m);
+    pushLog(t('status.jobFail', { err: m }));
+    toast.error(t('toast.jobFail', { err: m }));
+  };
+
+  const applyJobCancelled = () => {
+    setJobState('cancelled');
+    setClipProc({});
+    pushLog(t('status.jobCancel'));
+    toast.info(t('toast.jobCancel'));
+  };
+
   const startJob = async () => {
-    if (!client || !videoPath) return;
+    if (!videoPath || jobState === 'running') return;
+    if (backendMode !== 'ts' && !client) return;
     setError(null);
     setSegments([]);
     setSelectedSeg(null);
@@ -288,16 +386,69 @@ export default function App() {
     setLogLines([]);
     setProgress(null);
     setClipProc({});
+    if (backendMode === 'ts') {
+      // ts: revoke the previous run's blob URLs before dropping our
+      // references. python mode keeps artifacts on the sidecar's disk —
+      // nothing to revoke there.
+      if (vizBlobUrl) { URL.revokeObjectURL(vizBlobUrl); setVizBlobUrl(null); }
+      if (segmentsJsonHref) { URL.revokeObjectURL(segmentsJsonHref); setSegmentsJsonHref(null); }
+      for (const c of clips) {
+        if (c.url) URL.revokeObjectURL(c.url);
+      }
+    }
     setJobState('queued');
+
+    if (backendMode === 'ts') {
+      // ── ts path: run the pipeline in-renderer. Same state machine,
+      // same event shapes as the python WS — only the transport differs.
+      const id = crypto.randomUUID().replace(/-/g, '').slice(0, 12);
+      setJobId(id);
+      setJobState('running');
+      pushLog(t('status.jobStart', { id, flag: String(params.save_clips) }));
+      void tsRunnerRef.current!.start(videoPath, params, {
+        onProgress: applyProgress,
+        onSegment: applySegmentEmitted,
+        onClip: applyClipGenerated,
+        onViz: (v) => {
+          setVizBlobUrl(v.url);
+          setVizExt(v.extension);
+        },
+        onNotice: (kind) => {
+          if (kind === 'clipSkipLarge') {
+            pushLog(t('status.tsClipSkipLarge'));
+            toast.warning(t('status.tsClipSkipLarge'));
+          } else if (kind === 'vizWebm') {
+            pushLog(t('status.tsVizWebm'));
+            toast.info(t('status.tsVizWebm'));
+          }
+        },
+        onDone: (n) => {
+          // Build the segments.json equivalent while the run is fresh —
+          // a blob URL the ResultsActionsBar exposes as a download link.
+          try {
+            const json = tsRunnerRef.current!.buildSegmentsJson();
+            if (json) {
+              const blob = new Blob([JSON.stringify(json, null, 2)], { type: 'application/json' });
+              setSegmentsJsonHref(URL.createObjectURL(blob));
+            }
+          } catch { /* non-fatal — download link just stays absent */ }
+          applyJobCompleted(n);
+        },
+        onFailed: (err) => applyJobFailed(err),
+        onCancelled: () => applyJobCancelled(),
+      });
+      return;
+    }
+
     try {
       // Bake the latest annotation colours into the job params. We read
       // `colors` from state on every start, so any change in the
       // Settings panel takes effect on the NEXT job without a restart.
-      const r = await client.createJob(videoPath, { ...params, ...colors });
+      const r = await client!.createJob(videoPath, { ...params, ...colors });
       setJobId(r.job_id);
       setJobState('running');
       pushLog(t('status.jobStart', { id: r.job_id, flag: String(params.save_clips) }));
-      const close = client.openEvents(
+      const close = client!.openEvents(
         r.job_id,
         (e: any) => {
           try {
@@ -305,7 +456,7 @@ export default function App() {
             const data: any = e.data ?? {};
             if (e.type === 'pose.progress') {
               if (typeof data.frames === 'number') {
-                setProgress({
+                applyProgress({
                   frames: data.frames,
                   total: data.total ?? 0,
                   fps: typeof data.fps === 'number' ? data.fps : 0,
@@ -313,25 +464,11 @@ export default function App() {
                   segments_emitted: data.segments_emitted ?? 0,
                 });
               }
-              const d = data;
-              if (typeof d.fps === 'number' && typeof d.frames === 'number'
-                  && (d.frames % 50 === 0 || d.frames === d.total)) {
-                pushLog(t('status.poseProgress', {
-                  frames: d.frames, total: d.total,
-                  fps: d.fps.toFixed(1), emit: d.segments_emitted ?? 0,
-                }));
-              }
             }
             if (e.type === 'segment.emitted') {
               const seg = data.segment;
               if (!seg) return;
-              setSegments((s) => [...s, seg]);
-              pushLog(t('status.segmentEmitted', {
-                id: seg.seg_id,
-                start: seg.start_timecode ?? '?',
-                end: seg.end_timecode ?? '?',
-                contact: seg.contact_timecode ?? '?',
-              }));
+              applySegmentEmitted(seg);
             }
             if (e.type === 'clip.annotated') {
               pushLog(t('status.clipAnnotated', { id: data.seg_id }));
@@ -339,7 +476,8 @@ export default function App() {
             if (e.type === 'clip.progress') {
               // plan 003 — per-clip annotation stage progress. Keyed by
               // seg_id; concurrent clips (max_workers=2) ride side by side
-              // in the ProgressPanel inner bars.
+              // in the ProgressPanel inner bars. (python-only event —
+              // the ts cutter has no annotation stage.)
               const sid = typeof data.seg_id === 'number' ? data.seg_id : 0;
               if (sid > 0 && typeof data.frame === 'number') {
                 const stage: ClipProcessingState['stage'] =
@@ -364,44 +502,16 @@ export default function App() {
                 annotated: !!data.annotated,
                 thumb_ready: !!data.thumb_ready,
               };
-              if (info.seg_id > 0) {
-                setClips((prev) => {
-                  if (prev.some((c) => c.seg_id === info.seg_id)) return prev;
-                  return [...prev, info];
-                });
-                pushLog(t('status.clipGenerated', {
-                  id: info.seg_id,
-                  h264: info.playable ? t('status.h264Yes') : t('status.h264No'),
-                }));
-              }
-              // plan 003 — clip is fully done (extracted + annotated +
-              // H.264 attempted); drop its inner progress bar.
-              setClipProc((prev) => {
-                if (!(info.seg_id in prev)) return prev;
-                const next = { ...prev };
-                delete next[info.seg_id];
-                return next;
-              });
+              applyClipGenerated(info);
             }
             if (e.type === 'job.completed') {
-              setJobState('done');
-              setClipProc({});
-              pushLog(t('status.jobDone', { n: data.segment_count ?? '?' }));
-              toast.success(t('toast.jobDone', { n: data.segment_count ?? '?' }));
+              applyJobCompleted(data.segment_count ?? '?');
             }
             if (e.type === 'job.failed') {
-              setJobState('failed');
-              setClipProc({});
-              const msg = String(data.error ?? 'unknown');
-              setError(msg);
-              pushLog(t('status.jobFail', { err: msg }));
-              toast.error(t('toast.jobFail', { err: msg }));
+              applyJobFailed(String(data.error ?? 'unknown'));
             }
             if (e.type === 'job.cancelled') {
-              setJobState('cancelled');
-              setClipProc({});
-              pushLog(t('status.jobCancel'));
-              toast.info(t('toast.jobCancel'));
+              applyJobCancelled();
             }
           } catch (err) {
             // eslint-disable-next-line no-console
@@ -438,6 +548,15 @@ export default function App() {
   };
 
   const cancelJob = async () => {
+    if (backendMode === 'ts') {
+      // ts: abort the in-renderer pipeline; the runner surfaces
+      // onCancelled → applyJobCancelled (same UI outcome as the WS event).
+      if (!jobId) return;
+      tsRunnerRef.current?.cancel();
+      toast.info(t('toast.cancelSent'));
+      pushLog(t('status.cancelSent'));
+      return;
+    }
     if (!client || !jobId) return;
     try {
       await client.cancel(jobId);
@@ -460,6 +579,18 @@ export default function App() {
   // no clips cards, no viz button enabled, no stale job_id sitting
   // around that the WS would re-attach to.
   const resetJobState = () => {
+    // ts mode owns blob URLs (clips / viz / segments.json) — revoke them
+    // so the in-memory copies can actually be GC'd. python artifacts live
+    // on the sidecar's disk; nothing to revoke there.
+    if (backendMode === 'ts') {
+      for (const c of clips) {
+        if (c.url) URL.revokeObjectURL(c.url);
+      }
+      if (vizBlobUrl) URL.revokeObjectURL(vizBlobUrl);
+      if (segmentsJsonHref) URL.revokeObjectURL(segmentsJsonHref);
+      setVizBlobUrl(null);
+      setSegmentsJsonHref(null);
+    }
     setJobId(null);
     setSegments([]);
     setSelectedSeg(null);
@@ -473,6 +604,13 @@ export default function App() {
 
   // Delete the entire job — wipes /api/data/jobs/{id} from disk.
   const deleteJob = async () => {
+    if (backendMode === 'ts') {
+      // Defensive: the 🗑 button is hidden in ts mode (ResultsActionsBar
+      // downgrades); if it ever fires, an in-memory reset is the correct
+      // action — ts has no job directory on disk.
+      resetJobState();
+      return;
+    }
     if (!client || !jobId) return;
     if (jobState === 'running' || jobState === 'queued') {
       toast.warning(t('toast.deleteBusy', { state: jobState }));
@@ -506,7 +644,23 @@ export default function App() {
   // means a cancel mid-Pass-2 is a real flow. Now we probe on done /
   // failed / cancelled and let the HEAD response speak. We still skip
   // while the job is running to avoid hammering the server per-frame.
+  // plan 008 — artifacts are tracked per-mode with SEPARATE effects so
+  // the python effect keeps its original dependency array (and therefore
+  // its original render cadence) byte-identical to pre-008 behaviour.
   useEffect(() => {
+    if (backendMode !== 'ts') return;
+    // ts: artifacts are in-memory — derive flags straight from state
+    // instead of HEAD-probing a sidecar that doesn't exist.
+    setArtifacts({
+      segmentsJson: segments.length > 0,
+      viz: !!vizBlobUrl,
+      vizH264: !!vizBlobUrl,
+      clips: clips.length > 0,
+    });
+  }, [backendMode, segments.length, vizBlobUrl, clips.length]);
+
+  useEffect(() => {
+    if (backendMode !== 'python') return;
     if (!client || !jobId) {
       setArtifacts({ segmentsJson: false, viz: false, vizH264: false, clips: false });
       return;
@@ -581,6 +735,13 @@ export default function App() {
   // so the user can 取消 mid-wipe; the main process forwards the
   // abort signal to the sidecar fetch.
   const handleCleanupClips = async () => {
+    if (backendMode === 'ts') {
+      // ts: nothing lives on disk — confirm, then reset in-memory state.
+      if (!window.confirm(t('status.confirmCleanup'))) return;
+      resetJobState();
+      pushLog(t('status.cleanupDone', { n: 0, kb: '0.0' }));
+      return;
+    }
     if (!client || !jobId) return;
     if (jobState === 'running' || jobState === 'queued') {
       toast.warning(t('toast.cleanupBusy', { state: jobState }));
@@ -625,6 +786,12 @@ export default function App() {
   // Plan 005 — wrapped in a busy modal with callId-cancel; the main
   // process aborts the underlying archiver and unlinks the half-zip.
   const handleExportPackage = async () => {
+    if (backendMode === 'ts') {
+      // Defensive: the menu entry / toolbar button are hidden in ts mode
+      // (no job directory exists to package).
+      toast.warning(t('status.noExport'));
+      return;
+    }
     if (!jobId) {
       setError(t('status.noExport'));
       return;
@@ -713,7 +880,20 @@ export default function App() {
     handleDroppedFile(files[0]);
   };
 
-  if (!baseUrl) return <div style={{ padding: 24 }}>{t('status.waitSidecar')}</div>;
+  // Boot window: the backend-mode IPC hasn't resolved yet. Text is
+  // deliberately mode-neutral — ts mode must never surface a
+  // sidecar/python-related string, even for the few ms this screen shows.
+  // (plan 008 M3: ts mode now falls through to the SAME unified main UI
+  // as python — the backend choice is invisible to the frontend.)
+  if (backendMode === null) {
+    return <div style={{ padding: 24 }}>{t('status.starting')}</div>;
+  }
+  // Python mode, sidecar URL not ready yet → keep waiting. (ts mode has
+  // no sidecar by design — baseUrl stays null there and is never used,
+  // so this guard MUST be python-only or ts would be trapped here.)
+  if (backendMode === 'python' && !baseUrl) {
+    return <div style={{ padding: 24 }}>{t('status.waitSidecar')}</div>;
+  }
 
   const clipSegment = activeClip
     ? segments.find((s) => s.seg_id === activeClip.seg_id) ?? null
@@ -726,7 +906,14 @@ export default function App() {
   //   2. active clip → clip stream (if playable) else original
   //   3. selectedSeg / no active → original video
   let videoSrc: string | null = null;
-  if (vizMode && client && jobId) {
+  if (backendMode === 'ts') {
+    // ts: local sources only — viz blob, playable clip blob, or the
+    // swing-media:// stream of the original file. No sidecar http URLs
+    // exist in this mode.
+    if (vizMode && vizBlobUrl) videoSrc = vizBlobUrl;
+    else if (activeClip?.url) videoSrc = activeClip.url;
+    else if (videoPath) videoSrc = mediaUrl(videoPath);
+  } else if (vizMode && client && jobId) {
     videoSrc = artifacts.vizH264
       ? client.artifactUrl(jobId, 'viz_h264.mp4')
       : client.artifactUrl(jobId, 'viz.mp4');
@@ -737,19 +924,22 @@ export default function App() {
   } else if (videoPath && client) {
     videoSrc = client.videoUrl(videoPath);
   }
-  const thumbUrl = (segId: number) =>
-    client && jobId ? client.clipThumbUrl(jobId, segId) : '';
+  const thumbUrl = (segId: number) => {
+    if (backendMode === 'ts') {
+      // ts: thumbnails are data: URLs generated by the clip cutter and
+      // carried on the ClipInfo itself (cross-window safe).
+      return clips.find((c) => c.seg_id === segId)?.thumbUrl ?? '';
+    }
+    return client && jobId ? client.clipThumbUrl(jobId, segId) : '';
+  };
 
   // plan 003 — outer queue bar (done/discovered) is purely derived;
   // inner per-clip bars are pulled from the clipProc map (see WS handler).
   // Strictly the user's spec: shows dual bars only when a clip annotation
   // flag is on, not for extract-only runs.
-  const clipBarsEnabled = params.save_clips && (params.clip_bbox || params.clip_skel);
-
-  // TS backend mode: render the real pipeline panel (Phase 3+).
-  if (backendMode === 'ts') {
-    return <TsPipelinePanel />;
-  }
+  // ts: no per-clip annotation stage exists in-renderer, so the inner
+  // progress bars stay off — cards enqueue directly as each clip lands.
+  const clipBarsEnabled = backendMode !== 'ts' && params.save_clips && (params.clip_bbox || params.clip_skel);
 
   return (
     <div
@@ -897,6 +1087,9 @@ export default function App() {
           vizH264Available={artifacts.vizH264}
           segmentsJsonAvailable={artifacts.segmentsJson}
           clipsAvailable={artifacts.clips}
+          backendMode={backendMode ?? undefined}
+          segmentsJsonHref={segmentsJsonHref ?? undefined}
+          vizDownload={vizBlobUrl ? { href: vizBlobUrl, extension: vizExt } : null}
           onOpenDir={async (id) => {
             if (!window.api?.openOutputDir) return;
             const handle = busy.startBusy('open-output-dir', t('busy.title.open-output-dir'));
@@ -942,7 +1135,7 @@ export default function App() {
           background: 'var(--bg)',
         }}
       >
-        <ParamsForm params={params} onChange={setParams} disabled={jobState === 'running'} />
+        <ParamsForm params={params} onChange={setParams} disabled={jobState === 'running'} backendMode={backendMode ?? undefined} />
         <ResultsPanel
           jobId={jobId}
           logLines={logLines}

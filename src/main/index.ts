@@ -1,8 +1,9 @@
 import 'dotenv/config';
-import { app, BrowserWindow, ipcMain, dialog, shell, Menu, MenuItemConstructorOptions } from 'electron';
-import { join, resolve as resolvePath } from 'node:path';
+import { app, BrowserWindow, ipcMain, dialog, shell, Menu, MenuItemConstructorOptions, protocol } from 'electron';
+import { join, resolve as resolvePath, isAbsolute, extname } from 'node:path';
 import { spawn, ChildProcessWithoutNullStreams } from 'node:child_process';
-import { existsSync, readdirSync, statSync, createWriteStream, mkdirSync, rmSync, unlinkSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, statSync, createWriteStream, createReadStream, mkdirSync, rmSync, unlinkSync, readFileSync } from 'node:fs';
+import { Readable } from 'node:stream';
 
 // ── Backend mode (env-driven) ─────────────────────────────────────────────
 // SWING_BACKEND=python (default) — full PyInstaller sidecar, all features.
@@ -15,6 +16,101 @@ import { existsSync, readdirSync, statSync, createWriteStream, mkdirSync, rmSync
 // during dev. In prod set the env var on the launching shell instead.
 const BACKEND_MODE: 'python' | 'ts' = (process.env.SWING_BACKEND || '').toLowerCase() === 'ts' ? 'ts' : 'python';
 console.log(`[main] SWING_BACKEND=${BACKEND_MODE}`);
+
+// ── swing-media:// protocol (ts mode video pipeline) ──────────────────────
+// ts mode has no sidecar, so the renderer cannot use the python service's
+// /api/videos HTTP stream for <video> playback/seeking. swing-media:// is
+// a read-only local-file streaming scheme with HTTP Range support
+// (206/416/HEAD), giving the ts pipeline the same seek experience. URLs
+// look like swing-media://local/<encodeURIComponent(absPath)>. Read-only
+// by construction — no write verbs exist. MUST be registered at module
+// top level BEFORE app ready, otherwise the privileges don't apply.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'swing-media',
+    // corsEnabled: without it fetch() rejects the scheme outright at the
+    // CORS-enabled-schemes check ("Failed to fetch" before any handler
+    // code runs) — media elements don't need it, but the ts clip cutter
+    // fetches HEAD/range reads through the platform fetch().
+    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true },
+  },
+]);
+
+const MEDIA_CONTENT_TYPES: Record<string, string> = {
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.mov': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mkv': 'video/x-matroska',
+  '.avi': 'video/x-msvideo',
+};
+
+/** Install the swing-media:// request handler. Called once from app.whenReady. */
+function registerSwingMediaProtocol(): void {
+  protocol.handle('swing-media', (req) => {
+    try {
+      const p = decodeURIComponent(new URL(req.url).pathname.replace(/^\/+/, ''));
+      if (!isAbsolute(p)) return new Response('bad path', { status: 400 });
+      let st;
+      try {
+        st = statSync(p);
+      } catch {
+        return new Response('not found', { status: 404 });
+      }
+      if (!st.isFile()) return new Response('not a file', { status: 404 });
+      const size = st.size;
+      const type = MEDIA_CONTENT_TYPES[extname(p).toLowerCase()] ?? 'application/octet-stream';
+      const baseHeaders: Record<string, string> = {
+        'Content-Type': type,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': String(size),
+        // The renderer page origin (http://localhost in dev, file:// in
+        // packaged) is always cross-origin to swing-media://local, so
+        // every fetch()-visible response must carry ACAO. `*` is safe:
+        // the scheme only ever serves local media reads.
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Range',
+        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+      };
+      // CORS preflight (fetch with a Range header triggers one).
+      if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: baseHeaders });
+      // HEAD — no body; used by the ts clip cutter's size guard rail.
+      if (req.method === 'HEAD') return new Response(null, { status: 200, headers: baseHeaders });
+      const m = /^bytes=(\d*)-(\d*)$/.exec((req.headers.get('range') ?? '').trim());
+      if (m) {
+        let start: number;
+        let end: number;
+        if (m[1] === '' && m[2] !== '') {
+          // suffix range "bytes=-N" → last N bytes
+          start = Math.max(0, size - Number(m[2]));
+          end = size - 1;
+        } else {
+          start = Number(m[1]);
+          end = m[2] === '' ? size - 1 : Math.min(Number(m[2]), size - 1);
+        }
+        if (!Number.isFinite(start) || start >= size || start > end) {
+          return new Response(null, {
+            status: 416,
+            headers: { 'Content-Range': `bytes */${size}` },
+          });
+        }
+        const body = Readable.toWeb(createReadStream(p, { start, end })) as unknown as ReadableStream;
+        return new Response(body, {
+          status: 206,
+          headers: {
+            ...baseHeaders,
+            'Content-Length': String(end - start + 1),
+            'Content-Range': `bytes ${start}-${end}/${size}`,
+          },
+        });
+      }
+      const body = Readable.toWeb(createReadStream(p)) as unknown as ReadableStream;
+      return new Response(body, { status: 200, headers: baseHeaders });
+    } catch (e) {
+      return new Response(String(e), { status: 500 });
+    }
+  });
+}
 import {
   openPanel,
   closePanel,
@@ -458,6 +554,7 @@ async function loadMainWindow(win: BrowserWindow): Promise<void> {
 }
 
 app.whenReady().then(() => {
+  registerSwingMediaProtocol();
   applyDockIcon();
   createWindow();
 });
@@ -813,18 +910,33 @@ function buildMenu() {
     });
   }
 
-  template.push({
-    label: 'System',
-    submenu: [
-      { label: 'Open File…', accelerator: 'CmdOrCtrl+O', click: send('menu:open-file') },
-      { label: 'Export Package…', accelerator: 'CmdOrCtrl+E', click: send('menu:export-package') },
-      { type: 'separator' as const },
-      { label: 'Clear Current Job Dir', click: send('menu:clear-job') },
-      { label: 'Clear Output Dir…', click: send('menu:clear-output') },
-      { type: 'separator' as const },
-      { role: 'quit' as const },
-    ],
-  });
+  // Menu is backend-mode aware: the job features (export package / clear
+  // job dirs) are Python-sidecar operations. In ts mode there is no
+  // sidecar — showing those items would surface dead Python-feature
+  // entries in a mode that must display nothing Python-related. ts mode
+  // gets a minimal menu: quit (non-mac; the mac app menu already has it)
+  // + the shared Help menu below.
+  if (BACKEND_MODE === 'ts') {
+    if (!isMac) {
+      template.push({
+        label: 'File',
+        submenu: [{ role: 'quit' as const }],
+      });
+    }
+  } else {
+    template.push({
+      label: 'System',
+      submenu: [
+        { label: 'Open File…', accelerator: 'CmdOrCtrl+O', click: send('menu:open-file') },
+        { label: 'Export Package…', accelerator: 'CmdOrCtrl+E', click: send('menu:export-package') },
+        { type: 'separator' as const },
+        { label: 'Clear Current Job Dir', click: send('menu:clear-job') },
+        { label: 'Clear Output Dir…', click: send('menu:clear-output') },
+        { type: 'separator' as const },
+        { role: 'quit' as const },
+      ],
+    });
+  }
 
   template.push({
     label: 'Help',

@@ -153,6 +153,32 @@ npm run pack:linux  # Linux AppImage + .deb (needs to run on Linux)
 See [08 · Build & Package](08-build-package.md) for the cross-platform
 build matrix and code-signing / notarization notes.
 
+## 7. Backend modes (`SWING_BACKEND`)
+
+The GUI ships two interchangeable analysis backends. Both drive the
+**same main window** — the differences are a few status hints and which
+parameter knobs are active.
+
+```bash
+SWING_BACKEND=python npm run dev   # default — Python sidecar
+SWING_BACKEND=ts     npm run dev   # in-renderer WASM pipeline
+```
+
+| | `python` (default) | `ts` |
+| --- | --- | --- |
+| Engine | Python sidecar (uvicorn + ONNX / MediaPipe) | In-renderer WASM (onnxruntime-web + MediaPipe Tasks) |
+| Main window | Same unified UI | Same unified UI |
+| Clips / viz | Written to the job directory on disk | Held in memory — play from the clip cards, download via the action-bar links |
+| `segments.json` | `backend/data/jobs/<id>/segments.json` | Download link in the action bar |
+| Export Package · Open Output Dir · Clear Output Dir | Available | Hidden (no job directory exists) |
+| Parameters | All knobs active | `v_swing` / `max_bridge` / `max_lost_frames` + the clip-annotation section are greyed out (ⓘ) — no ts equivalent yet |
+| Status bar | Sidecar warmup + per-model load | Per-model WASM load |
+
+Known limitations of `ts` mode: analysis runs at ~1× playback speed
+(a 60 s video takes about a minute), clip cutting refuses sources above
+1.5 GB (in-memory encoder guard), and there is no job persistence —
+results live until you reset or close the window.
+
 ## Where do things end up?
 
 | Path | What's in it |

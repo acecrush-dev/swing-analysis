@@ -1,28 +1,32 @@
 /**
- * Frame extraction — turn an HTMLVideoElement into a stream of snapshots.
+ * Frame sampling — turn an HTMLVideoElement into a list of timestamps.
+ *
+ * plan 008 M2: this module no longer extracts ImageBitmaps. The bitmaps
+ * had NO downstream consumer — pose.ts detects directly on the video
+ * element and viz.ts re-seeks and draws itself — so holding every sampled
+ * frame as a bitmap made memory grow O(video length) and OOM'd long
+ * videos. Collecting timestamps only is O(1) memory regardless of
+ * duration.
  *
  * Approach: prefer the modern `requestVideoFrameCallback` Chromium API
  * (zero seek overhead, precise `mediaTime` per frame). Fall back to a
- * seek-and-draw loop on browsers without it (rare in Electron since
- * Chromium is the engine, but Firefox-on-Electron-forks have shown up
- * and the seek path is well-trodden).
+ * seek loop on browsers without it (rare in Electron since Chromium is
+ * the engine, but Firefox-on-Electron-forks have shown up and the seek
+ * path is well-trodden).
  *
  * Why not ffmpeg.wasm here: the user's HTMLVideoElement is already in
  * memory and the codecs are native. Pulling in ffmpeg.wasm (~30 MB
- * download + ~10 s wasm init) just to demux MP4 we already have
- * decoded would be a regression.
- *
- * Output: Promise<Frame[]> — eager, not an async iterator. The pipeline
- * orchestrator wants the full frame list before it can pick peaks;
- * materialising it once up front is simpler than passing generators
- * through every downstream step.
+ * download + ~10 s wasm init) just to demux MP4 we already have decoded
+ * would be a regression.
  */
 import type { WristFrame } from './types';
 
+/**
+ * Compat shape — plan 008 stripped the `bitmap` field (nothing ever
+ * consumed it). Anything that only needs the timestamp keeps compiling.
+ */
 export interface FrameSample {
   tsMs: number;
-  /** ImageBitmap suitable for transfer to a worker or to mediapipe. */
-  bitmap: ImageBitmap;
 }
 
 export interface IterateOpts {
@@ -33,41 +37,47 @@ export interface IterateOpts {
   onProgress?: (current: number, total: number) => void;
 }
 
-const HAS_RVFC = typeof window !== 'undefined'
+export const HAS_RVFC = typeof window !== 'undefined'
   && 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
 
+/**
+ * Core: sample the video and return the sampled timestamps (ms from
+ * video start). Memory O(1) — only numbers, no frame pixels.
+ */
+export async function sampleTimestamps(
+  video: HTMLVideoElement,
+  opts: IterateOpts,
+): Promise<number[]> {
+  if (HAS_RVFC) return sampleViaRvfc(video, opts);
+  return sampleViaSeek(video, opts);
+}
+
+/** Compat alias for the pre-008 API: timestamps wrapped as FrameSamples. */
 export async function sampleFrames(
   video: HTMLVideoElement,
   opts: IterateOpts,
 ): Promise<FrameSample[]> {
-  if (HAS_RVFC) return sampleViaRvfc(video, opts);
-  return sampleViaSeek(video, opts);
+  const tss = await sampleTimestamps(video, opts);
+  return tss.map((tsMs) => ({ tsMs }));
 }
 
 // ── requestVideoFrameCallback path ────────────────────────────────────────
 //
 // Plays the video at native rate, calling back per painted frame. We
-// grab the frames whose `mediaTime` is within `intervalMs` of the
-// target timestamp. The video runs at real-time, so a 30 s clip takes
-// ~30 s wall-clock; we'd want a faster seek-based path for batch
-// processing, but for a single tennis swing video the user won't notice.
-// For batch processing we'd want ffmpeg.wasm demux → VideoDecoder —
-// noted as Phase 4 work.
+// record the first frame whose `mediaTime` passes each target timestamp.
+// The video runs at real-time, so a 30 s clip takes ~30 s wall-clock —
+// a known limitation (see plan 008 Out: WebCodecs fast path is future
+// work); `stride` gives users a speed lever in the meantime.
 
-async function sampleViaRvfc(video: HTMLVideoElement, opts: IterateOpts): Promise<FrameSample[]> {
+async function sampleViaRvfc(video: HTMLVideoElement, opts: IterateOpts): Promise<number[]> {
   await waitForMetadata(video);
   const fps = opts.fps;
   const intervalMs = 1000 / fps;
   const stride = Math.max(1, opts.stride ?? 1);
   const total = Math.ceil((video.duration * 1000) / intervalMs);
 
-  const samples: FrameSample[] = [];
-  const canvas = createOffscreen(video.videoWidth, video.videoHeight);
-  const ctx = canvas.getContext('2d') as OffscreenCanvasRenderingContext2D | null;
-  if (!ctx) throw new Error('OffscreenCanvas 2d context unavailable');
-
+  const tss: number[] = [];
   let nextTarget = 0;  // next desired mediaTime (ms)
-  let lastIdx = -1;
   let cancelled = false;
 
   video.muted = true;  // autoplay needs muted in some envs
@@ -88,16 +98,13 @@ async function sampleViaRvfc(video: HTMLVideoElement, opts: IterateOpts): Promis
       if (cancelled) return;
       const ts = metadata.mediaTime * 1000;
       if (ts >= nextTarget) {
-        ctx.drawImage(video, 0, 0);
-        // transferToImageBitmap returns a fresh bitmap the receiver can
-        // own; the canvas is reset after the call.
-        samples.push({ tsMs: ts, bitmap: canvas.transferToImageBitmap() });
+        tss.push(ts);
         nextTarget += intervalMs * stride;
-        opts.onProgress?.(samples.length, total);
+        opts.onProgress?.(tss.length, total);
       }
       if (metadata.mediaTime >= video.duration - 0.01) {
         cleanup();
-        resolve(samples);
+        resolve(tss);
         return;
       }
       video.requestVideoFrameCallback(tick);
@@ -107,45 +114,33 @@ async function sampleViaRvfc(video: HTMLVideoElement, opts: IterateOpts): Promis
   });
 }
 
-// ── seek-and-draw fallback ──────────────────────────────────────────────
+// ── seek fallback ────────────────────────────────────────────────────────
 //
-// Slower (one I/O per frame) but works in any browser. Used as a
-// fallback so a future Firefox-on-Electron or similar doesn't break.
+// Slower (one seek per frame) but works in any browser. No drawing —
+// seeks alone give us the timestamps.
 
-async function sampleViaSeek(video: HTMLVideoElement, opts: IterateOpts): Promise<FrameSample[]> {
+async function sampleViaSeek(video: HTMLVideoElement, opts: IterateOpts): Promise<number[]> {
   await waitForMetadata(video);
   const fps = opts.fps;
   const intervalMs = 1000 / fps;
   const stride = Math.max(1, opts.stride ?? 1);
   const total = Math.ceil((video.duration * 1000) / intervalMs);
 
-  const samples: FrameSample[] = [];
-  const canvas = createOffscreen(video.videoWidth, video.videoHeight);
-  const ctx = canvas.getContext('2d') as OffscreenCanvasRenderingContext2D | null;
-  if (!ctx) throw new Error('OffscreenCanvas 2d context unavailable');
-
+  const tss: number[] = [];
   for (let i = 0; i < total; i += stride) {
     if (opts.signal?.aborted) throw new DOMException('aborted', 'AbortError');
-    const tsSec = (i * intervalMs) / 1000;
-    // Seek and wait for `seeked` event before drawing — drawing a
-    // mid-seek video frame produces the OLD frame, not the new one.
-    video.currentTime = tsSec;
+    const tsMs = i * intervalMs;
+    // Seek and wait for `seeked` — the pose stage needs the video
+    // settled on the frame before detectForVideo() runs on it.
+    video.currentTime = tsMs / 1000;
     await waitForSeeked(video);
-    ctx.drawImage(video, 0, 0);
-    samples.push({ tsMs: i * intervalMs, bitmap: canvas.transferToImageBitmap() });
-    opts.onProgress?.(samples.length, total);
+    tss.push(tsMs);
+    opts.onProgress?.(tss.length, total);
   }
-  return samples;
+  return tss;
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────
-function createOffscreen(w: number, h: number): OffscreenCanvas {
-  // Always OffscreenCanvas — supported in every Chromium build Electron
-  // ships with. Fallback to a detached HTMLCanvasElement is unnecessary
-  // for our target environment.
-  return new OffscreenCanvas(w, h);
-}
-
 function waitForMetadata(video: HTMLVideoElement): Promise<void> {
   if (video.readyState >= 1) return Promise.resolve();
   return new Promise((resolve, reject) => {
@@ -164,10 +159,9 @@ function waitForSeeked(video: HTMLVideoElement): Promise<void> {
 }
 
 /**
- * Convenience: turn a FrameSample list into a WristFrame[] skeleton
- * (all slots empty) so the rest of the pipeline can index by frame
- * without conditional checks. Pose detection fills the wrist slots
- * in-place.
+ * Convenience: turn a sample list into a WristFrame[] skeleton (all
+ * slots empty) so the rest of the pipeline can index by frame without
+ * conditional checks. Pose detection fills the wrist slots in-place.
  */
 export function emptyWristFrames(samples: FrameSample[]): WristFrame[] {
   return samples.map((s, i) => ({

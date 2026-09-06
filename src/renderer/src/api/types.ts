@@ -75,6 +75,11 @@ export interface ClipInfo {
   playable: boolean;   // clip_NNN_h264.mp4 present → Chromium 内嵌可播
   annotated: boolean;
   thumb_ready: boolean;
+  // plan 008 M4 — ts-mode-only fields. The sidecar's clip.generated JSON
+  // never carries them (its clips are served over HTTP artifact URLs);
+  // the in-renderer cutter attaches blob:/data: URLs instead.
+  url?: string;      // blob: URL of the cut clip (main window only)
+  thumbUrl?: string; // JPEG data: URL (safe across detached panel windows)
 }
 
 // plan 003 — per-clip annotation stage progress. One entry per currently

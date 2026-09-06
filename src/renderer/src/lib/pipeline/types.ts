@@ -56,6 +56,29 @@ export interface PipelineOptions {
   /** Frames skipped between samples (1 = every frame; 2 = every other; useful
    *  for fast previews on long videos). */
   stride?: number;
+  // ── plan 008 M2: JobParams passthroughs (see tsBackend/paramsMap.ts) ──
+  /** Hard cap on sampled frames (0/undefined = unlimited). Truncates the
+   *  sample list AFTER generation — mirrors python `max_frames`. */
+  maxFrames?: number;
+  /** Drop segments shorter than this many seconds (python `min_dur`). */
+  minDurSec?: number;
+  /** Drop segments longer than this many seconds (python `max_dur`; 0/undefined = unlimited). */
+  maxDurSec?: number;
+  /** Padding frames before segment start — overrides clipHalfWidth when set
+   *  (python `buf_before`). */
+  bufBeforeFrames?: number;
+  /** Padding frames after segment end — overrides clipHalfWidth when set
+   *  (python `buf_after`). */
+  bufAfterFrames?: number;
+  /** EMA smoothing alpha for wrist-y smoothing (python `smooth_alpha`).
+   *  Higher = more weight on recent frames. Default 0.6. */
+  alpha?: number;
+  /** Wrist dot colours for the viz overlay (python `color_pose_*`). */
+  colors?: { right?: string; left?: string };
+  /** plan 008 — called once with the final segment list right after
+   *  peak-picking, BEFORE the (long) viz render. Lets the unified UI
+   *  show segments early, matching the python side's online emit order. */
+  onSegments?: (segments: SwingSegment[]) => void;
   onProgress?: (p: PipelineProgress) => void;
   signal?: AbortSignal;
 }

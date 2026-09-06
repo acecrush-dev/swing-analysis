@@ -33,6 +33,12 @@ interface PeakOpts {
   alpha?: number;
   /** Frames on each side of a peak to include in the extracted clip. Default 30 (1s @ 30fps). */
   clipHalfWidth?: number;
+  /** plan 008 M2 — explicit padding before segment start. Takes priority
+   *  over clipHalfWidth when set (python `buf_before` → frames). */
+  bufBeforeFrames?: number;
+  /** plan 008 M2 — explicit padding after segment end. Takes priority
+   *  over clipHalfWidth when set (python `buf_after` → frames). */
+  bufAfterFrames?: number;
 }
 
 /** Pick peaks on a 1-D wrist-y series. Returns smoothed peak indices. */
@@ -84,12 +90,17 @@ export function peaksToSegments(
   frames: WristFrame[],
   opts: PeakOpts = {},
 ): SwingSegment[] {
-  const { clipHalfWidth = 30 } = opts;
+  const { bufBeforeFrames, bufAfterFrames } = opts;
+  // bufBefore/After (python buf_before/buf_after) win over the legacy
+  // clipHalfWidth when present — callers that only set clipHalfWidth
+  // keep working unchanged.
+  const before = bufBeforeFrames ?? opts.clipHalfWidth ?? 30;
+  const after = bufAfterFrames ?? opts.clipHalfWidth ?? 30;
   const segments: SwingSegment[] = [];
   for (let i = 0; i < peakIndices.length; i++) {
     const peakIdx = peakIndices[i];
-    const start = Math.max(0, peakIdx - clipHalfWidth);
-    const end = Math.min(frames.length - 1, peakIdx + clipHalfWidth);
+    const start = Math.max(0, peakIdx - before);
+    const end = Math.min(frames.length - 1, peakIdx + after);
     if (!frames[peakIdx]) continue;
     // Confidence: average visibility of wrists within the clip window.
     // Higher = more reliable detection.

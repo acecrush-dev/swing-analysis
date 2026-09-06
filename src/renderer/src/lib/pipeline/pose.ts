@@ -20,6 +20,31 @@ const VISIBILITY_THRESHOLD = 0.3;
 const MP_LEFT_WRIST = 15;
 const MP_RIGHT_WRIST = 16;
 
+// plan 008 M2 — mediapipe requires `detectForVideo()` timestamps to be
+// STRICTLY increasing per landmarker instance. Our landmarker is a
+// singleton cached in modelLoader and reused across runs; a second Run
+// restarts at ts≈0, which is ≤ the last timestamp of the previous run
+// and makes mediapipe throw a packet-timestamp error. Fix: keep a
+// module-level offset — whenever the incoming ts is not ahead of the
+// last one we served, bump the offset so the effective timestamp keeps
+// increasing. Per-run video time is preserved relative to the run start.
+let mpOffset = 0;
+let mpLast = -1;
+
+function monotonicTs(tsMs: number): number {
+  if (tsMs <= mpLast) {
+    mpOffset += mpLast + 1 - tsMs;
+  }
+  mpLast = tsMs + mpOffset;
+  return mpLast;
+}
+
+/** Reset the monotonic guard — call when the landmarker is recreated. */
+export function resetPoseTimestamp(): void {
+  mpOffset = 0;
+  mpLast = -1;
+}
+
 /**
  * Detect pose on the video at the given timestamp. Returns the wrist
  * positions (in normalised [0,1] coords) for the highest-confidence
@@ -35,7 +60,9 @@ export function detectPose(video: HTMLVideoElement, tsMs: number): { leftWrist?:
   if (!landmarker) {
     throw new Error('mediapipe runner not loaded — call modelLoader.loadAll() first');
   }
-  const result = landmarker.detectForVideo(video, tsMs);
+  // Effective timestamp: video time + monotonic offset (see mpOffset
+  // above — keeps the singleton landmarker happy across runs).
+  const result = landmarker.detectForVideo(video, monotonicTs(tsMs));
   if (!result || !result.landmarks || result.landmarks.length === 0) {
     return {};
   }
@@ -83,6 +110,86 @@ export async function populateWristFrames(
     if (onProgress && (i % 5 === 0 || i === total - 1)) onProgress(i + 1, total);
   }
   return frames;
+}
+
+/**
+ * plan 008 M4 (perf) — single-pass live detection. Plays the video once
+ * and runs detectForVideo() on every painted frame whose mediaTime has
+ * passed the next sample target, so sampling + pose happen in ONE 1x
+ * playback with zero seeks. The two-pass alternative (sample playback,
+ * then seek-per-frame detection) capped at ~20 fps on long videos
+ * because every seek re-decodes from the nearest keyframe through the
+ * swing-media stream; the live pass runs at playback speed (~30 fps)
+ * and cuts total pipeline wall-clock roughly in half.
+ *
+ * `targets` must be the sorted arithmetic sample timestamps (ms); slots
+ * the playback never reaches (truncated tail) stay empty — the peak
+ * picker interpolates through them.
+ */
+export async function populateWristFramesLive(
+  video: HTMLVideoElement,
+  targets: number[],
+  frames: WristFrame[],
+  onProgress?: (current: number, total: number) => void,
+  signal?: AbortSignal,
+): Promise<WristFrame[]> {
+  const total = targets.length;
+  if (!total) return frames;
+
+  video.pause();
+  video.muted = true;
+  video.playsInline = true;
+  video.currentTime = 0;
+  await waitForSeeked(video);
+
+  let next = 0;
+  let cancelled = false;
+
+  return new Promise<WristFrame[]>((resolve, reject) => {
+    const cleanup = () => {
+      try { video.pause(); } catch { /* ignore */ }
+      video.removeEventListener('ended', onEnded);
+      video.removeEventListener('error', onError);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const onError = () => { cleanup(); reject(new Error(`video error: ${video.error?.message}`)); };
+    const onAbort = () => { cancelled = true; cleanup(); reject(new DOMException('aborted', 'AbortError')); };
+    const onEnded = () => {
+      // Playback finished — any unreached tail slots stay empty.
+      cleanup();
+      onProgress?.(total, total);
+      resolve(frames);
+    };
+    video.addEventListener('ended', onEnded);
+    video.addEventListener('error', onError);
+    signal?.addEventListener('abort', onAbort);
+
+    const paint = (_now: DOMHighResTimeStamp, metadata: VideoFrameCallbackMetadata) => {
+      if (cancelled) return;
+      const ts = metadata.mediaTime * 1000;
+      // One detection covers every sample target this painted frame
+      // passed (playback hiccups can skip targets; reusing the pose is
+      // far better than seeking backwards).
+      if (next < total && ts >= targets[next] - 1) {
+        const wrist = detectPose(video, ts);
+        while (next < total && ts >= targets[next] - 1) {
+          frames[next].rightWrist = wrist.rightWrist;
+          frames[next].leftWrist = wrist.leftWrist;
+          next++;
+        }
+        if (next % 5 === 0 || next === total) onProgress?.(next, total);
+      }
+      if (next >= total) {
+        cleanup();
+        onProgress?.(total, total);
+        resolve(frames);
+        return;
+      }
+      video.requestVideoFrameCallback(paint);
+    };
+    video.requestVideoFrameCallback(paint);
+    video.play().catch((e) => { cleanup(); reject(e); });
+  });
 }
 
 function waitForSeeked(video: HTMLVideoElement): Promise<void> {
