@@ -47,9 +47,21 @@ if (!['python', 'ts'].includes(mode)) {
   console.error(`[build] SWING_BUILD_MODE must be 'python' or 'ts', got '${mode}'`);
   process.exit(1);
 }
-if (!['mac', 'win', 'linux', 'dir', 'all'].includes(target)) {
-  console.error(`[build] target must be mac / win / linux / dir / all, got '${target}'`);
+if (!['mac', 'win', 'linux', 'dir', 'all', 'link-models'].includes(target)) {
+  console.error(`[build] target must be mac / win / linux / dir / all / link-models, got '${target}'`);
   process.exit(1);
+}
+
+// Lightweight maintenance entry (no .env write, no clean, no packaging):
+// recreate the dev-only renderer model links, then exit. Use after a fresh
+// clone (or after deleting the links) before a ts-mode `pnpm dev` — python
+// mode never needs them (models ship via backend/ + sidecar). Requires the
+// LFS binaries to exist first: `git lfs pull` or `bash scripts/fetch-model.sh`.
+// Also exposed as `pnpm models:link`.
+if (target === 'link-models') {
+  ensureModelSymlinks();
+  console.log('[build] done — renderer model links ready (only needed for ts mode)');
+  process.exit(0);
 }
 
 console.log(`[build] mode=${mode}  target=${target}${ebExtraArgs.length ? ' extra=' + ebExtraArgs.join(' ') : ''}`);

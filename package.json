@@ -16,6 +16,7 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "icons": "node scripts/generate-icons.js",
+    "models:link": "node scripts/build.mjs link-models",
     "bundle:py": "node scripts/build-python-bundle.js",
     "clean": "node scripts/clean.js",
     "docs:dev": "vitepress dev docs",

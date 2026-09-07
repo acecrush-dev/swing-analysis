@@ -9,12 +9,15 @@ loads directly via `onnxruntime-web` + `@mediapipe/tasks-vision` when
 links on any other machine and kill `vite build` — its public-dir copy
 `statSync`s every entry). They exist only on machines that created them.
 
-To get them back after a fresh clone (or before a **ts-mode** build), run
-`node scripts/build.mjs dir` with `SWING_BUILD_MODE=ts`, or just let
-`build.mjs` do it: `ensureModelSymlinks()` recreates the links (falling
-back to real copies on filesystems without symlink support). Python-mode
-builds never need this directory populated — those models ship via the
-`backend/models` extraResources instead.
+To get them back after a fresh clone (or before a **ts-mode** build):
+
+    pnpm models:link          # = node scripts/build.mjs link-models
+
+which recreates the links (falling back to real copies on filesystems
+without symlink support). Prerequisite: the LFS binaries must exist in
+`backend/models/` first — `git lfs pull` or `bash scripts/fetch-model.sh`.
+Python-mode needs none of this: those models ship via the `backend/models`
+extraResources instead, so `pnpm dev` in python mode works on a bare clone.
 
 ## Why symlinks, not copies
 
