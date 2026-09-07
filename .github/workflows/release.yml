@@ -133,6 +133,13 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+
+      # electron-vite bundles → out/ (gitignored; the asar's `files` entry
+      # `out/**/*` is empty without this — the asar sanity check then fails
+      # with `out/main/index.js was not found in this archive`).
+      - name: Build app bundles (electron-vite → out/)
+        run: pnpm run build
+
       - name: Build Python sidecar (ELF, --onefile)
         run: pnpm run bundle:py
 
@@ -180,6 +187,13 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+
+      # electron-vite bundles → out/ (gitignored; the asar's `files` entry
+      # `out/**/*` is empty without this — the asar sanity check then fails
+      # with `out/main/index.js was not found in this archive`).
+      - name: Build app bundles (electron-vite → out/)
+        run: pnpm run build
+
       - name: Build Python sidecar (PE32+, --onedir)
         run: pnpm run bundle:py
 
@@ -227,6 +241,13 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+
+      # electron-vite bundles → out/ (gitignored; the asar's `files` entry
+      # `out/**/*` is empty without this — the asar sanity check then fails
+      # with `out/main/index.js was not found in this archive`). One build
+      # covers both arch passes below — out/ is arch-independent JS.
+      - name: Build app bundles (electron-vite → out/)
+        run: pnpm run build
 
       # ── Pass 1: arm64 (native Apple Silicon Python) ──
       - uses: actions/setup-python@v5

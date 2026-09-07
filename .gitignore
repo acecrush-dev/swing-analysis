@@ -19,8 +19,12 @@ yarn-error.log*
 pnpm-debug.log*
 
 # ── docs build output (VitePress → GitHub Pages) ───────────────────────
-docs/.vitepress/dist/             # generated static site (npm run docs:build)
-docs/.vitepress/cache/            # vitepress dev/build cache
+# NOTE: .gitignore has no inline comments — `pattern # text` is matched
+# literally as a filename containing spaces and never ignores anything.
+# generated static site (npm run docs:build)
+docs/.vitepress/dist/
+# vitepress dev/build cache
+docs/.vitepress/cache/
 # .nojekyll gets re-emitted by the deploy workflow if needed locally.
 
 # electron-builder / electron-forge
@@ -30,15 +34,19 @@ electron-builder-cache/
 
 # ── python venv + runtime + build intermediates ────────────────────────
 backend/.venv/
-backend/data/                    # service.json, jobs/<id>/segments.json etc.
+# service.json, jobs/<id>/segments.json etc.
+backend/data/
 # All model files (backend/models/*.onnx and *.task) live in Git LFS,
 # so a fresh clone just gets 134-byte pointer text — fetch via
 # `git lfs pull` or `bash scripts/fetch-model.sh` to materialise them.
 # No exception rule needed: LFS-tracked files are stored as pointers in git
 # but the real binary is downloaded on `git lfs checkout`.
-backend/cli_jobs/                # if CLI --out-dir points here
-backend/dist/                    # PyInstaller one-file build output (see scripts/build-python-bundle.js)
-backend/build/                   # PyInstaller --workpath / --specpath intermediates (scripts/build-python-bundle.js)
+# if CLI --out-dir points here
+backend/cli_jobs/
+# PyInstaller one-file build output (see scripts/build-python-bundle.js)
+backend/dist/
+# PyInstaller --workpath / --specpath intermediates (scripts/build-python-bundle.js)
+backend/build/
 __pycache__/
 *.pyc
 *.pyo
@@ -47,7 +55,12 @@ __pycache__/
 # The build/ tree mixes checked-in artefacts (icon.ico, icon.icns, icon.png,
 # entitlements.mac.plist) with regenerated intermediates (mac-icon.iconset,
 # win-icon.ico) and electron-builder output. Keep only the final assets.
-build/
+# NOTE: must be `build/*`, NOT `build/` — a directory-level exclude makes git
+# skip the whole dir, so the `!` re-includes below can never match ("cannot
+# re-include a file if a parent directory of that file is excluded"). The
+# `build/` form silently untracked the icons → CI packaged with the default
+# Electron icon and a broken extraResources icon.png.
+build/*
 !build/icon.png
 !build/icon.ico
 !build/icon.icns

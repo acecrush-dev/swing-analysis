@@ -49,7 +49,7 @@
 //                                                  on PATH without writing
 
 const { execFileSync, spawn } = require('node:child_process');
-const { existsSync, mkdirSync, statSync, readdirSync } = require('node:fs');
+const { existsSync, mkdirSync, statSync, readdirSync, renameSync } = require('node:fs');
 const { resolve, join, dirname } = require('node:path');
 
 const root = resolve(__dirname, '..');
@@ -177,6 +177,19 @@ proc.on('exit', (code) => {
   if (code !== 0) {
     console.error(`[bundle:py] PyInstaller exited ${code}`);
     process.exit(code ?? 1);
+  }
+  // Windows onedir: PyInstaller names the exe after --name, producing
+  // swing-backend-win.exe — but the runtime contract is swing-backend.exe
+  // (the existence check below, and src/main/index.ts spawning
+  // resources/backend/swing-backend-win/swing-backend.exe). Rename to match.
+  // Renaming is safe: a PyInstaller 6 onedir exe locates _internal/ relative
+  // to its own directory, not by its own name.
+  if (isWin) {
+    const rawExe = join(bundleOut, 'swing-backend-win.exe');
+    if (!existsSync(bundleExeInside) && existsSync(rawExe)) {
+      renameSync(rawExe, bundleExeInside);
+      console.log('[bundle:py] renamed swing-backend-win.exe → swing-backend.exe (runtime contract)');
+    }
   }
   // Windows onedir → check the .exe inside the tree; mac/linux onefile → check the file.
   if (!existsSync(bundleExeInside)) {
