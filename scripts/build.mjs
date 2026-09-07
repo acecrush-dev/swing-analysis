@@ -24,7 +24,7 @@
 // pointing electron-builder at it keeps package.json clean.
 
 import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
@@ -143,11 +143,12 @@ function ensureModelSymlinks() {
     const source = resolve(backendDir, f);
     if (existsSync(target)) continue;  // already linked
     try {
-      const { symlinkSync } = require('node:fs');
       symlinkSync(source, target);
     } catch {
       // Fall back to a copy if symlinks aren't allowed.
-      const { copyFileSync } = require('node:fs');
+      // (This is an ESM module — `require` doesn't exist here; the old
+      // inline require() calls threw ReferenceError before any linking
+      // happened, so a fresh-clone ts build had no models at all.)
       copyFileSync(source, target);
       console.warn(`[build] copied (couldn't symlink) ${f}`);
     }

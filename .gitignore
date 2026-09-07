@@ -85,3 +85,16 @@ data
 *.zip
 *.test
 .env
+
+# ── renderer-side model links ───────────────────────────────────────────
+# src/renderer/public/assets/models/ holds DEV-ONLY symlinks into
+# backend/models/ (LFS). They must NOT be committed: they carry absolute
+# /Users/... targets, so a fresh checkout materializes them as dangling
+# links — vite's copyPublicDir statSync's every entry and the build dies
+# with ENOENT (all 3 CI platforms, release workflow). `build.mjs` recreates
+# them locally for ts-mode builds via ensureModelSymlinks(); python builds
+# never need them (models ship via extraResources backend/models).
+# `/*` form on purpose — a directory-level exclude would make the README.md
+# re-include unmatchable (same gotcha as build/ above).
+src/renderer/public/assets/models/*
+!src/renderer/public/assets/models/README.md

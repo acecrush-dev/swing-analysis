@@ -4,11 +4,17 @@ This directory holds the ONNX / MediaPipe `.task` files that the renderer
 loads directly via `onnxruntime-web` + `@mediapipe/tasks-vision` when
 `SWING_BACKEND=ts`.
 
-**The files in this directory are symlinks** pointing at
-`backend/models/` so we don't duplicate 168 MB of weights in two places.
-The symlinks resolve at runtime (Vite serves them straight through to
-`/assets/models/...`), so any update in `backend/models/` is immediately
-visible without re-running a script.
+**The symlinks in this directory are dev-only and NOT committed to git**
+(they carry absolute `/Users/...` targets, which materialize as dangling
+links on any other machine and kill `vite build` — its public-dir copy
+`statSync`s every entry). They exist only on machines that created them.
+
+To get them back after a fresh clone (or before a **ts-mode** build), run
+`node scripts/build.mjs dir` with `SWING_BUILD_MODE=ts`, or just let
+`build.mjs` do it: `ensureModelSymlinks()` recreates the links (falling
+back to real copies on filesystems without symlink support). Python-mode
+builds never need this directory populated — those models ship via the
+`backend/models` extraResources instead.
 
 ## Why symlinks, not copies
 
@@ -27,7 +33,5 @@ visible without re-running a script.
 | `rtmpose-m-27c0e6.onnx`     | ONNX      | `onnxruntime-web` → `InferenceSession`      |
 | `pose_landmarker_lite.task` | MediaPipe | `@mediapipe/tasks-vision` → `PoseLandmarker` |
 
-The symlinks above should already point at `backend/models/`. If a
-fresh clone has dangling symlinks (LFS not pulled yet), run
-`bash scripts/fetch-model.sh` (or `git lfs pull`) to materialise the
-real binaries — the symlinks will resolve correctly from there.
+If a fresh clone has no LFS binaries yet, run `bash scripts/fetch-model.sh`
+(or `git lfs pull`) first, then recreate the links as described above.
