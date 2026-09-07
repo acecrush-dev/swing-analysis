@@ -544,7 +544,15 @@ function createMainWindow(): BrowserWindow {
     }
   });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  win.on('closed', () => closeAllPanels());
+  win.on('closed', () => {
+    closeAllPanels();
+    // X on the main window = shut the whole app down, front-end and sidecar
+    // alike — even when detached panels are still open. app.quit() closes
+    // the remaining windows and fires before-quit → sidecar.kill(), which
+    // tree-kills the backend (SIGTERM to the POSIX process group /
+    // taskkill /T /F on Windows).
+    app.quit();
+  });
   return win;
 }
 
@@ -563,7 +571,11 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  // Quit on EVERY platform (incl. macOS). The old darwin stay-alive
+  // template kept a windowless app in the dock with the sidecar still
+  // running — before-quit (and thus sidecar.kill()) never fired, because
+  // before-quit is the ONLY place the backend service gets cleaned up.
+  app.quit();
 });
 
 app.on('before-quit', () => { busy.cancelAllInflight(); sidecar.kill(); closeAllPanels(); });
