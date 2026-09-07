@@ -123,17 +123,21 @@ jobs:
       - run: pip install --upgrade pip
       - run: pip install -r backend/requirements.txt pyinstaller
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          cache: pnpm
 
-      - run: npm ci --no-audit --no-fund
+      - run: pnpm install --frozen-lockfile
       - name: Build Python sidecar (ELF, --onefile)
-        run: npm run bundle:py
+        run: pnpm run bundle:py
 
       - name: Build Linux installers (AppImage + deb, x64)
-        run: npx electron-builder --linux --x64
+        run: pnpm exec electron-builder --linux --x64
 
       - name: Collect Linux artefacts
         run: |
@@ -166,17 +170,21 @@ jobs:
       - run: pip install --upgrade pip
       - run: pip install -r backend/requirements.txt pyinstaller
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          cache: pnpm
 
-      - run: npm ci --no-audit --no-fund
+      - run: pnpm install --frozen-lockfile
       - name: Build Python sidecar (PE32+, --onedir)
-        run: npm run bundle:py
+        run: pnpm run bundle:py
 
       - name: Build Windows installer (NSIS, x64)
-        run: npx electron-builder --win --x64
+        run: pnpm exec electron-builder --win --x64
 
       - name: Collect Windows artefacts
         shell: bash
@@ -209,12 +217,16 @@ jobs:
           ref: ${{ needs.resolve-tag.outputs.version }}
           lfs: true
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          cache: pnpm
 
-      - run: npm ci --no-audit --no-fund
+      - run: pnpm install --frozen-lockfile
 
       # ── Pass 1: arm64 (native Apple Silicon Python) ──
       - uses: actions/setup-python@v5
@@ -223,11 +235,11 @@ jobs:
       - run: pip install --upgrade pip
       - run: pip install -r backend/requirements.txt pyinstaller
       - name: Build Python sidecar (Mach-O arm64)
-        run: npm run bundle:py
+        run: pnpm run bundle:py
       - name: Evidence — verify arm64 Mach-O
         run: file backend/dist/swing-backend
       - name: Build macOS installers (arm64)
-        run: npx electron-builder --mac --arm64
+        run: pnpm exec electron-builder --mac --arm64
       - name: Collect arm64 artefacts
         run: |
           mkdir -p out
@@ -242,7 +254,7 @@ jobs:
       - run: pip install --upgrade pip
       - run: pip install -r backend/requirements.txt pyinstaller
       - name: Build Python sidecar (Mach-O x86_64)
-        run: npm run bundle:py
+        run: pnpm run bundle:py
       - name: Evidence — verify x86_64 Mach-O
         run: |
           file backend/dist/swing-backend
@@ -250,7 +262,7 @@ jobs:
             echo "sidecar Mach-O is not x86_64 — pass2 PyInstaller picked the wrong interpreter"; exit 1;
           }
       - name: Build macOS installers (x64)
-        run: npx electron-builder --mac --x64
+        run: pnpm exec electron-builder --mac --x64
       - name: Collect x64 artefacts
         run: |
           mv release/*x64* out/ 2>/dev/null || true

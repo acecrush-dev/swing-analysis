@@ -26,7 +26,7 @@ on:
     paths:
       - 'docs/**'
       - 'package.json'
-      - 'package-lock.json'
+      - 'pnpm-lock.yaml'
       - '.github/workflows/docs-publish-public.yml'
   workflow_dispatch:
 
@@ -47,15 +47,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          cache: pnpm
 
-      - run: npm ci --no-audit --no-fund
+      - run: pnpm install --frozen-lockfile
 
       - name: Build VitePress site
-        run: npm run docs:build
+        run: pnpm run docs:build
 
       # Auth with the PAT — `actions/checkout` doesn't accept a per-repo
       # token when pushing to a *different* repo, so we shell out.
