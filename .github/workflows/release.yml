@@ -272,10 +272,25 @@ jobs:
         with:
           python-version: '3.13'
           architecture: x64
+
+      - name: Pin PATH to the x64 interpreter (pass-2)
+        run: |
+          # A second setup-python call does NOT displace pass-1's arm64 bin
+          # dir at the front of PATH — bare `python3`/`pip` kept resolving to
+          # the arm64 interpreter, so PyInstaller emitted an arm64 Mach-O in
+          # the x64 pass (the Evidence check below caught it). pythonLocation
+          # points at the x64 toolcache dir this action just prepared; put it
+          # in front for every later step, and assert arch now while failing
+          # is still cheap.
+          echo "$pythonLocation/bin" >> "$GITHUB_PATH"
+          "$pythonLocation/bin/python3" -c "import platform; m = platform.machine(); assert m == 'x86_64', f'pass-2 interpreter is {m}, not x86_64'; print('[pass2] x64 interpreter ok:', m)"
+
       - run: pip install --upgrade pip
       - run: pip install -r backend/requirements.txt pyinstaller
       - name: Build Python sidecar (Mach-O x86_64)
-        run: pnpm run bundle:py
+        run: |
+          python3 -c "import platform; m = platform.machine(); assert m == 'x86_64', f'PATH resolved python3 is {m} — PATH pin failed'; print('[pass2] PATH python3 arch:', m)"
+          pnpm run bundle:py
       - name: Evidence — verify x86_64 Mach-O
         run: |
           file backend/dist/swing-backend
