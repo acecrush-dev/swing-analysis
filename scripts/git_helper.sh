@@ -408,7 +408,8 @@ cmd_re_release() {
   echo ""
   echo "──────────────────────────────────────"
   echo "后续（等 set-version 全绿后手动执行）:"
-  echo "  $SCRIPT_NAME call-workflow release.yml -f version=$TAG"
+  echo "  ./scripts/$SCRIPT_NAME call-workflow release.yml -f version=$TAG"
+  echo "  ./scripts/$SCRIPT_NAME call-workflow release.yml -f version=$TAG -f publish_final=true"
   echo "  （draft 验证通过后再: -f version=$TAG -f publish_final=true）"
   echo "──────────────────────────────────────"
 }
