@@ -157,9 +157,29 @@ const args = [
 ];
 
 console.log(`[bundle:py] host=${process.platform} arch=${process.arch} mode=${onedir ? 'onedir' : 'onefile'}`);
-console.log(`[bundle:py] running: ${py} ${args.join(' ')}`);
+
+// macOS cross-arch targeting: setup-python's macOS "x64" interpreter is a
+// universal2 build whose arm64 slice runs natively on arm64 hosts, so
+// PyInstaller would target arm64. Setting SWING_PY_ARCH=x86_64 (release.yml
+// mac pass-2) launches the interpreter via `arch -x86_64` — the process is
+// Rosetta-translated, uname reports x86_64, and PyInstaller emits an
+// x86_64 bundle. The spawned tree inherits the translation. Unset ⇒ no-op
+// (local builds / Windows / Linux unchanged).
+const pyArch = process.env.SWING_PY_ARCH;
+let launcher = py;
+let launcherArgs = args;
+if (pyArch) {
+  if (process.platform !== 'darwin') {
+    console.error(`[bundle:py] SWING_PY_ARCH=${pyArch} is only meaningful on macOS (host=${process.platform})`);
+    process.exit(3);
+  }
+  launcher = 'arch';
+  launcherArgs = [`-${pyArch}`, py, ...args];
+}
+
+console.log(`[bundle:py] running: ${launcher} ${launcherArgs.join(' ')}`);
 const start = Date.now();
-const proc = spawn(py, args, { stdio: 'inherit' });
+const proc = spawn(launcher, launcherArgs, { stdio: 'inherit' });
 
 // Sum bytes recursively under a directory (used for onedir size reporting).
 function dirSizeBytes(p) {
