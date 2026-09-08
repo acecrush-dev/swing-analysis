@@ -4,7 +4,19 @@
 fastapi>=0.110
 uvicorn[standard]>=0.27
 numpy>=1.26
-opencv-python>=4.8
+
+# ── Intel-mac wheel reality (env markers, evaluated per interpreter) ──────
+# The mac x64 sidecar (release.yml pass-2, Rosetta, Python 3.12) and real
+# Intel Macs must resolve a DIFFERENT, older wheel set than arm64/linux/win:
+#   mediapipe   — upstream NEVER shipped an Intel-mac cp313 wheel; Intel
+#                 support ended at 0.10.21 (cp312 max). It also requires
+#                 numpy<2, and opencv 5.x requires numpy>=2 → opencv is
+#                 capped at 4.x in this environment.
+#   onnxruntime — x86_64-mac wheels end at 1.23.2 (1.24+ is arm64-only).
+# `platform_machine` reports x86_64 under Rosetta translation, so the same
+# file serves pass-1 (arm64 → modern pins) and pass-2 (x64 → legacy pins).
+opencv-python>=4.8,<5; platform_system == "Darwin" and platform_machine == "x86_64"
+opencv-python>=4.8; platform_system != "Darwin" or platform_machine != "x86_64"
 # Pinned: mediapipe 1.0 wheel has a regression on Apple Silicon —
 # TensorsToDetectionsCalculator::Open() aborts inside the Metal delegate
 # init (`DrishtiMetalHelper initWithCalculatorContext:` →
@@ -14,12 +26,14 @@ opencv-python>=4.8
 # Re-test with `mediapipe>=1.0` once the upstream calculator sanity check
 # is fixed; revert this pin and re-run the smoke test in
 # docs/guide/07-troubleshooting.md#apple-silicon-metal-delegate-regression.
-mediapipe==0.10.35
+mediapipe==0.10.35; platform_system != "Darwin" or platform_machine != "x86_64"
+mediapipe==0.10.21; platform_system == "Darwin" and platform_machine == "x86_64"
 pydantic>=2.6
 
 # ONNX runtime — for RTMDet (person detect) + RTMPose (alt pose backend).
 # CoreML EP preferred on Apple Silicon; falls back to CPU automatically.
-onnxruntime>=1.17
+onnxruntime>=1.17; platform_system != "Darwin" or platform_machine != "x86_64"
+onnxruntime==1.23.2; platform_system == "Darwin" and platform_machine == "x86_64"
 
 # Clip H.264 preview transcode (plan 002). imageio-ffmpeg ships a static
 # ffmpeg binary via pip — no system install needed. If the wheel is

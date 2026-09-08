@@ -73,6 +73,13 @@ function venvPy() {
 }
 
 function resolvePy() {
+  // CI override (release.yml mac pass-2): pin the exact interpreter instead
+  // of trusting PATH order. The mac job runs TWO passes with DIFFERENT
+  // python versions (arm64/3.13, then x64-Rosetta/3.12 — see release.yml);
+  // after the second setup-python call a bare `python3` lookup can quietly
+  // resolve to the wrong install, which would bundle the wrong wheel set.
+  const envPy = process.env.SWING_PYTHON;
+  if (envPy && existsSync(envPy)) return envPy;
   const v = venvPy();
   if (existsSync(v)) return v;
   // Fallback for CI systems without the checked-in venv: use system python3.

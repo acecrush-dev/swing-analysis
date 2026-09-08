@@ -267,7 +267,7 @@ jobs:
           mv release/*arm64* out/ 2>/dev/null || true
           ls -la out/
 
-      # ── Pass 2: x64 (Rosetta-translated Python) ──
+      # ── Pass 2: x64 (Rosetta-translated Python 3.12 + legacy wheels) ──
       # Belt-and-suspenders: ensure Rosetta 2 is present BEFORE setup-python.
       # macos-latest arm64 runners ship with Rosetta pre-installed, but make
       # it explicit so the failure mode is clear if the runner image ever
@@ -283,9 +283,18 @@ jobs:
             echo "::error::Rosetta x86_64 translation unavailable — install-rosetta failed"; exit 1;
           }
 
+      # WHY 3.12 HERE vs pass-1's 3.13 (upstream wheel constraint, not a
+      # style choice): mediapipe NEVER shipped an Intel-mac cp313 wheel —
+      # Intel support ended at 0.10.21 (cp312 max) — and onnxruntime
+      # x86_64-mac wheels end at 1.23.2. The legacy set is selected by the
+      # platform markers in backend/requirements.txt. The different minor
+      # version also gives pass-2 its OWN site-packages, so it can never
+      # import pass-1's arm64 wheels (the arch-contamination failure mode
+      # of the 3.13/3.13 pair: pip skipped reinstalling "already satisfied"
+      # arm64 numpy and PyInstaller's dlopen died on it — run 34194945012).
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.13'
+          python-version: '3.12'
           architecture: x64
 
       # Early-fail guard: setup-python's macOS "x64" interpreter is a
@@ -306,13 +315,47 @@ jobs:
       - run: arch -x86_64 "$pythonLocation/bin/python3" -m pip install --upgrade pip
       - run: arch -x86_64 "$pythonLocation/bin/python3" -m pip install -r backend/requirements.txt pyinstaller
       - name: Build Python sidecar (Mach-O x86_64)
-        run: SWING_PY_ARCH=x86_64 pnpm run bundle:py
+        # SWING_PYTHON pins the exact interpreter so PATH order can never
+        # quietly resolve bundle:py to pass-1's (see resolvePy() in
+        # scripts/build-python-bundle.js); SWING_PY_ARCH wraps it in
+        # arch -x86_64 so PyInstaller emits an x86_64 bundle.
+        run: SWING_PYTHON="$pythonLocation/bin/python3" SWING_PY_ARCH=x86_64 pnpm run bundle:py
       - name: Evidence — verify x86_64 Mach-O
         run: |
           file backend/dist/swing-backend
           file backend/dist/swing-backend | grep -q 'x86_64' || {
             echo "sidecar Mach-O is not x86_64 — pass2 PyInstaller picked the wrong interpreter"; exit 1;
           }
+      # Smoke gate: mediapipe 0.10.21 on Intel/translated has never been run
+      # by this repo — but the sidecar's own warmup does a REAL blank-frame
+      # inference per model, so a broken graph init (the 1.0.1 Metal-delegate
+      # abort class) surfaces here as a red step instead of a broken
+      # installer. An arm64 runner executing the binary under Rosetta is the
+      # closest proxy to an Intel Mac's CPU path that CI can offer.
+      - name: Smoke — boot x86_64 sidecar under Rosetta
+        run: |
+          LOG=/tmp/x64-smoke.log
+          ./backend/dist/swing-backend --port 18742 \
+            --models-dir "$GITHUB_WORKSPACE/backend/models" \
+            --data-dir /tmp/x64-smoke >"$LOG" 2>&1 &
+          PID=$!
+          trap 'kill $PID 2>/dev/null || true' EXIT
+          for i in $(seq 1 120); do
+            if grep -q '\[model\] mediapipe: ready' "$LOG" \
+              && grep -q '\[model\] rtmpose: ready' "$LOG" \
+              && grep -q '\[model\] rtmdet: ready' "$LOG"; then
+              echo "[smoke] all three models ready under x86_64 ✓"
+              exit 0
+            fi
+            if grep -q '\[model\].*: failed' "$LOG"; then
+              echo "::error::a model failed to load under x86_64 — log:"; cat "$LOG"; exit 1
+            fi
+            if ! kill -0 "$PID" 2>/dev/null; then
+              echo "::error::sidecar exited early under x86_64 — log:"; cat "$LOG"; exit 1
+            fi
+            sleep 2
+          done
+          echo "::error::smoke timeout (240s) waiting for model warmup — log:"; cat "$LOG"; exit 1
       - name: Build macOS installers (x64)
         run: pnpm exec electron-builder --mac --x64
       - name: Collect x64 artefacts
