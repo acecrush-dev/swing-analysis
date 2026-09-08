@@ -263,13 +263,17 @@ jobs:
         run: pnpm exec electron-builder --mac --arm64
       - name: Collect arm64 artefacts
         run: |
-          mkdir -p out
-          # -type f ONLY: electron-builder also leaves release/mac-arm64/
-          # (the unpacked Electron staging dir, ~800 MB). The old glob
-          # `mv release/*arm64*` moved that DIRECTORY into out/ too, and
-          # since the asar packs out/**/* the x64 pass then baked ~800 MB
-          # of arm64 frameworks into the x64 dmg (1.59 GB vs 467 MB).
-          find release -maxdepth 1 -type f -name '*arm64*' -exec mv {} out/ \;
+          # Collect into dist/, NEVER out/: electron-builder packs out/**/*
+          # into the asar, so any installer parked in out/ gets baked into
+          # the NEXT pass's dmg. History: the original `mv release/*arm64*`
+          # moved electron-builder's mac-arm64/ staging DIR (~800 MB of
+          # arm64 frameworks) into out/ → x64 dmg 1.59 GB; the first fix
+          # (-type f) still moved the 446 MB arm64 .dmg FILE itself into
+          # out/ → x64 dmg 1.07 GB. dist/ is upload-only, asar never sees it.
+          # -type f also skips release/mac-arm64/ (unpack staging dir).
+          mkdir -p dist
+          find release -maxdepth 1 -type f -name '*arm64*' -exec mv {} dist/ \;
+          ls -la dist/
           ls -la out/
 
       # ── Pass 2: x64 (Rosetta-translated Python 3.12 + legacy wheels) ──
@@ -365,13 +369,29 @@ jobs:
         run: pnpm exec electron-builder --mac --x64
       - name: Collect x64 artefacts
         run: |
-          find release -maxdepth 1 -type f -name '*x64*' -exec mv {} out/ \;
-          ls -la out/
+          mkdir -p dist
+          find release -maxdepth 1 -type f -name '*x64*' -exec mv {} dist/ \;
+          ls -la dist/
+          # Size sentinel: the x64 dmg should be within ~1.5× of the arm64
+          # one (same renderer, same models, sidecar within ~10%). Anything
+          # ≥2× means an installer got baked into the asar again — fail the
+          # run instead of shipping the bloat.
+          ARM64_DMG=$(find dist -maxdepth 1 -type f -name '*arm64*.dmg' | head -n 1)
+          X64_DMG=$(find dist -maxdepth 1 -type f -name '*x64*.dmg' | head -n 1)
+          if [[ -z "$ARM64_DMG" || -z "$X64_DMG" ]]; then
+            echo "::error::missing dmg in dist/ (arm64='${ARM64_DMG:-none}' x64='${X64_DMG:-none}')"; exit 1
+          fi
+          ARM64_MB=$(( $(stat -f%z "$ARM64_DMG") / 1048576 ))
+          X64_MB=$(( $(stat -f%z "$X64_DMG") / 1048576 ))
+          echo "[sentinel] arm64=${ARM64_MB}MB x64=${X64_MB}MB"
+          if (( X64_MB > ARM64_MB * 2 )); then
+            echo "::error::x64 dmg is ${X64_MB}MB vs arm64 ${ARM64_MB}MB (≥2×) — asar likely swallowed an installer again"; exit 1
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
           name: installers-mac-${{ needs.resolve-tag.outputs.bare_version }}
-          path: out/
+          path: dist/
 
   publish-release:
     needs: [resolve-tag, build-linux, build-windows, build-mac]

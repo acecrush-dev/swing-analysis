@@ -21,6 +21,8 @@
 # Subcommands:
 #   list-tags       local tags vs origin, + what release.yml would pick   [alias: lt]
 #   list-releases   releases on the public mirror repo                    [alias: lr]
+#   set-latest      point GitHub's "Latest" at the highest-semver release
+#                   on the public mirror (pointer, not a copy)            [alias: sl]
 #   delete-tag      delete a tag locally and/or on origin
 #   delete-release  delete a release (incl. draft) on the public mirror
 #   re-release      guided cleanup + re-tag for republishing a version    [alias: rr]
@@ -57,6 +59,8 @@ Tag 状态查询:
   list-tags       本地 tag vs origin 对照 + package.json 当前版本
                   + 远程最高 semver tag（release.yml 留空 version 时选它）(alias: lt)
   list-releases   公开镜像仓库 $PUBLIC_REPO 上的 releases/drafts (alias: lr)
+  set-latest      把 GitHub "Latest" 指到镜像上最高 semver 的 release（指针，不复制资产；
+                  不传 tag 自动选最高） (alias: sl)
 
 清理（重发同一版本前必做）:
   delete-tag      删除本地和/或 origin 上的 tag
@@ -221,6 +225,89 @@ cmd_list_releases() {
     echo "⚠️  读取失败（无权限或仓库不存在）。" >&2
     echo "    需要本地 gh 账号能读 ${PUBLIC_REPO}（CI 侧用的是 PAT_PUBLIC_REPO" >&2
     echo "    secret；个人账号对公开仓库默认有读权限，报错请检查 gh auth login）。" >&2
+    exit 1
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# set-latest — point GitHub's "Latest" designation at a mirror release
+#
+# Why no asset copying: GitHub's Latest is a POINTER, not a copy. The
+# /releases/latest permalink and the releases/latest API resolve to whichever
+# release carries the flag, so pointing it at the highest-semver release is
+# enough — users always land on the right installers and we never duplicate
+# ~2.5 GB of assets. `gh release edit --latest=true` is the supported knob;
+# the flag is exclusive (pointing at one release implicitly un-flags the
+# previous holder).
+# -----------------------------------------------------------------------------
+
+cmd_set_latest() {
+  require_gh
+
+  local target_tag
+
+  if [[ $# -ge 1 && -n "${1:-}" ]]; then
+    # Explicit tag: must already exist AND be published — Latest on a draft
+    # is meaningless (drafts are invisible to /releases/latest).
+    normalize_version "$1"
+    target_tag="$TAG"
+    if ! mirror_release_exists "$target_tag"; then
+      echo "⚠️  $PUBLIC_REPO 上不存在 release $target_tag" >&2
+      exit 1
+    fi
+  else
+    # Auto-pick: highest semver among PUBLISHED mirror releases. Drafts are
+    # excluded — they can't hold Latest until promoted by the publish step.
+    local published highest
+    published=$(gh release list --repo "$PUBLIC_REPO" --limit 50 \
+                  --json tagName,isDraft \
+                  -q '.[] | select(.isDraft | not) | .tagName' 2>/dev/null) || {
+      echo "❌ 读取 $PUBLIC_REPO releases 失败（gh 认证 / 权限 / 仓库不存在）" >&2
+      exit 1
+    }
+    highest=$(printf '%s\n' "$published" \
+                | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' \
+                | sort -V | tail -n 1 || true)
+    if [[ -z "$highest" ]]; then
+      echo "⚠️  $PUBLIC_REPO 上没有已发布的 release，无可指向的 Latest"
+      echo "    （draft 需要 release workflow publish_final=true 先转正）"
+      exit 1
+    fi
+    target_tag="$highest"
+    echo "（未传 tag → 自动选已发布中的最高 semver）"
+  fi
+
+  local draft_state cur_latest
+  draft_state=$(gh release view "$target_tag" --repo "$PUBLIC_REPO" --json isDraft -q '.isDraft' 2>/dev/null || true)
+  if [[ "$draft_state" == "true" ]]; then
+    echo "❌ $target_tag 还是 draft，不能作为 Latest。先转正：" >&2
+    echo "    触发 release workflow（publish_final=true）或 gh release edit $target_tag --repo $PUBLIC_REPO --draft=false" >&2
+    exit 1
+  fi
+
+  cur_latest=$(gh api "repos/$PUBLIC_REPO/releases/latest" -q .tag_name 2>/dev/null || true)
+
+  echo "======================================"
+  echo "镜像仓库:      $PUBLIC_REPO"
+  echo "目标 Latest:   $target_tag"
+  echo "当前 Latest:   ${cur_latest:-（无，尚未有任何已发布 release）}"
+  echo "方式:          指针切换（gh release edit --latest=true），不复制资产"
+  echo "======================================"
+
+  if [[ -n "$cur_latest" && "$cur_latest" == "$target_tag" ]]; then
+    echo "✅ $target_tag 已经是 Latest，无需变更"
+    exit 0
+  fi
+
+  confirm "确认把 Latest 指到 $target_tag ?"
+
+  if gh release edit "$target_tag" --repo "$PUBLIC_REPO" --latest=true; then
+    local now_latest
+    now_latest=$(gh api "repos/$PUBLIC_REPO/releases/latest" -q .tag_name 2>/dev/null || echo "?")
+    echo "✅ 完成。当前 Latest → $now_latest"
+    echo "   https://github.com/$PUBLIC_REPO/releases/latest"
+  else
+    echo "❌ 设置失败（gh release edit --latest 需要 ≥2.11 且有写权限）" >&2
     exit 1
   fi
 }
@@ -650,6 +737,7 @@ cmd="${1:-help}"
 case "$cmd" in
   list-tags|lt)         shift; cmd_list_tags "$@" ;;
   list-releases|lr)     shift; cmd_list_releases "$@" ;;
+  set-latest|sl)        shift; cmd_set_latest "$@" ;;
   delete-tag)           shift; cmd_delete_tag "$@" ;;
   delete-release)       shift; cmd_delete_release "$@" ;;
   re-release|rr)        shift; cmd_re_release "$@" ;;
