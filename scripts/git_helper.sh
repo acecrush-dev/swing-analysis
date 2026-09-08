@@ -25,7 +25,9 @@
 #   delete-release  delete a release (incl. draft) on the public mirror
 #   re-release      guided cleanup + re-tag for republishing a version    [alias: rr]
 #   set-tag         manual tag create + push (⚠ prefer set-version.yml!)
-#   call-workflow   trigger a GitHub Actions workflow (gh CLI)            [alias: cw]
+#   call-workflow   trigger a GitHub Actions workflow (gh CLI),          [alias: cw]
+#                  optional -w / --watch resolves the run id and prints
+#                  live status (jobs → success/failure/cancelled)
 #   list-workflow   list GitHub Actions workflows (gh CLI)                [alias: lw]
 #   reset           hard-reset current branch to a commit + force-push
 #   help            show this help
@@ -74,6 +76,9 @@ Tag 状态查询:
   call-workflow   触发 GitHub Actions workflow (alias: cw)
                   $SCRIPT_NAME call-workflow set-version.yml -f mode=set -f version=1.2.3
                   $SCRIPT_NAME call-workflow release.yml -f version=v1.2.3 -f publish_final=true
+                  $SCRIPT_NAME call-workflow release.yml -w       # 触发 + 实时跟踪到结束
+                  默认触发后解析 run id 打一行状态；加 -w / --watch 持续跟随（Ctrl-C 退出
+                  不影响 run 本身）
   list-workflow   列出远程 workflows (alias: lw)
 
 通用:
@@ -490,9 +495,11 @@ cmd_set_tag() {
 
 cmd_call_workflow() {
   if [[ $# -lt 1 ]]; then
-    echo "用法: $SCRIPT_NAME call-workflow <workflow-file-or-id> [-f key=val ...]"
-    echo "示例: $SCRIPT_NAME call-workflow set-version.yml -f mode=set -f version=1.2.3"
-    echo "      $SCRIPT_NAME call-workflow release.yml -f version=v1.2.3 -f publish_final=true"
+    echo "用法: $SCRIPT_NAME call-workflow <workflow-file-or-id> [-f key=val ...] [-w|--watch]"
+    echo "示例:"
+    echo "  $SCRIPT_NAME call-workflow set-version.yml -f mode=set -f version=1.2.3"
+    echo "  $SCRIPT_NAME call-workflow release.yml -f version=v1.2.3 -f publish_final=true"
+    echo "  $SCRIPT_NAME call-workflow release.yml -w       # 触发 + 实时跟踪直到结束"
     exit 1
   fi
 
@@ -500,11 +507,13 @@ cmd_call_workflow() {
 
   local workflow="$1"
   shift
+  local watch=false
   local -a inputs=()
   local has_inputs=false
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      -f|--field) inputs+=(-f "$2"); has_inputs=true; shift 2 ;;
+      -w|--watch)         watch=true; shift ;;
+      -f|--field)         inputs+=(-f "$2"); has_inputs=true; shift 2 ;;
       *) echo "未知参数: $1" >&2; exit 1 ;;
     esac
   done
@@ -517,6 +526,14 @@ cmd_call_workflow() {
   fi
   echo "======================================"
 
+  # Capture the current top run id BEFORE dispatch — `gh workflow run` is
+  # async and returns no id, so we wait for the API to surface a NEW top
+  # entry (different from this one) before printing status. Otherwise a
+  # recent prior run would match immediately and we'd watch the wrong thing.
+  local pre_top_run_id
+  pre_top_run_id=$(gh run list --workflow "$workflow" --limit 1 \
+                     --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null || true)
+
   # `+ "${array[@]}"` form: no-op on empty array (avoids bash 3.2 + set -u
   # "unbound variable" on macOS).
   if $has_inputs; then
@@ -526,9 +543,55 @@ cmd_call_workflow() {
   fi
 
   echo ""
-  echo "✅ 已触发。查看 run:"
-  echo "  gh run list --workflow=\"$workflow\" --limit 1"
-  echo "  gh run watch \$(gh run list --workflow=\"$workflow\" --limit 1 --json databaseId -q '.[0].databaseId')"
+  echo "⏳ 解析最新 run id（最多 10s）..."
+
+  local run_id="" run_status="?" run_conclusion="" run_url="" run_branch=""
+  local _i
+  for _i in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 1
+    local candidate
+    candidate=$(gh run list --workflow "$workflow" --limit 1 \
+                  --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null || true)
+    if [[ -n "$candidate" && "$candidate" != "$pre_top_run_id" ]]; then
+      run_id="$candidate"
+      run_status=$(gh run view "$run_id" --json status     --jq '.status     // "?"'   2>/dev/null || echo "?")
+      run_conclusion=$(gh run view "$run_id" --json conclusion --jq '.conclusion // ""'   2>/dev/null || echo "")
+      run_url=$(gh run view "$run_id" --json url        --jq '.url        // ""'   2>/dev/null || echo "")
+      run_branch=$(gh run view "$run_id" --json headBranch --jq '.headBranch // ""'   2>/dev/null || echo "")
+      break
+    fi
+    # Edge case: there was no prior run at all and the new id IS pre_top_run_id
+    # (empty). That's fine — accept it.
+    if [[ -n "$candidate" && -z "$pre_top_run_id" ]]; then
+      run_id="$candidate"
+      run_status=$(gh run view "$run_id" --json status     --jq '.status     // "?"'   2>/dev/null || echo "?")
+      run_conclusion=$(gh run view "$run_id" --json conclusion --jq '.conclusion // ""'   2>/dev/null || echo "")
+      run_url=$(gh run view "$run_id" --json url        --jq '.url        // ""'   2>/dev/null || echo "")
+      run_branch=$(gh run view "$run_id" --json headBranch --jq '.headBranch // ""'   2>/dev/null || echo "")
+      break
+    fi
+  done
+
+  if [[ -z "$run_id" ]]; then
+    echo "⚠️  10s 内未拿到新 run id（CI 可能繁忙 / 限流），手动查:"
+    echo "  gh run list --workflow=\"$workflow\" --limit 1"
+    return 0 2>/dev/null || exit 0
+  fi
+
+  echo ""
+  echo "  run #$run_id  ${run_status}${run_conclusion:+ → ${run_conclusion}}"
+  [[ -n "$run_branch" ]] && echo "  branch : $run_branch"
+  [[ -n "$run_url"    ]] && echo "  url    : $run_url"
+
+  if $watch; then
+    echo ""
+    echo "👀 实时跟踪（Ctrl-C 退出不影响 run 本身，run 会继续跑）..."
+    gh run watch "$run_id" --exit-status
+  else
+    echo ""
+    echo "💡 继续看: gh run watch $run_id --exit-status"
+    echo "   或:     $SCRIPT_NAME call-workflow $workflow -w${has_inputs:+ ${inputs[*]}}"
+  fi
 }
 
 # -----------------------------------------------------------------------------
