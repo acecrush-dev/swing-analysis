@@ -264,7 +264,12 @@ jobs:
       - name: Collect arm64 artefacts
         run: |
           mkdir -p out
-          mv release/*arm64* out/ 2>/dev/null || true
+          # -type f ONLY: electron-builder also leaves release/mac-arm64/
+          # (the unpacked Electron staging dir, ~800 MB). The old glob
+          # `mv release/*arm64*` moved that DIRECTORY into out/ too, and
+          # since the asar packs out/**/* the x64 pass then baked ~800 MB
+          # of arm64 frameworks into the x64 dmg (1.59 GB vs 467 MB).
+          find release -maxdepth 1 -type f -name '*arm64*' -exec mv {} out/ \;
           ls -la out/
 
       # ── Pass 2: x64 (Rosetta-translated Python 3.12 + legacy wheels) ──
@@ -360,7 +365,7 @@ jobs:
         run: pnpm exec electron-builder --mac --x64
       - name: Collect x64 artefacts
         run: |
-          mv release/*x64* out/ 2>/dev/null || true
+          find release -maxdepth 1 -type f -name '*x64*' -exec mv {} out/ \;
           ls -la out/
 
       - uses: actions/upload-artifact@v4
@@ -389,13 +394,30 @@ jobs:
           ls -la dist/
           ls -la dist/installers-*/
 
+          # Upload installer FILES only. The artefacts also contain out/'s
+          # main/ preload/ renderer/ subdirs (electron-vite output) — the
+          # old bare `dist/installers-*/**/*` glob handed gh those
+          # DIRECTORIES as assets and died with
+          # "read .../preload: is a directory" (first run to ever reach
+          # this step; every earlier release failed before publishing).
+          assets=()
+          shopt -s nullglob
+          for f in dist/installers-*/**/*.{dmg,exe,AppImage,deb,blockmap,zip}; do
+            [ -f "$f" ] && assets+=("$f")
+          done
+          shopt -u nullglob
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "::error::no installer assets found under dist/"; exit 1
+          fi
+          printf 'asset: %s\n' "${assets[@]}"
+
           gh release create "$TAG" \
               --repo acecrush-dev/swing-analysis-app \
               --title "AceCrush Swing-Analysis $TAG" \
               --notes "Automated draft release. Promote to public via the 'release' workflow with publish_final=true once verified." \
               --generate-notes \
               --draft \
-              dist/installers-*/**/*
+              "${assets[@]}"
 
           echo "::notice::Draft release ${TAG} created: https://github.com/acecrush-dev/swing-analysis-app/releases/tag/${TAG}"
 
