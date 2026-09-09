@@ -208,7 +208,8 @@ proc.on('exit', (code) => {
   // Windows onedir: PyInstaller names the exe after --name, producing
   // swing-backend-win.exe — but the runtime contract is swing-backend.exe
   // (the existence check below, and src/main/index.ts spawning
-  // resources/backend/swing-backend-win/swing-backend.exe). Rename to match.
+  // resources/backend/swing-backend.exe after electron-builder flattens
+  // this tree's contents into resources/backend/). Rename to match.
   // Renaming is safe: a PyInstaller 6 onedir exe locates _internal/ relative
   // to its own directory, not by its own name.
   if (isWin) {

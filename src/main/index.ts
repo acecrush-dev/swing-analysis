@@ -315,11 +315,16 @@ function pickSidecarLaunch(): SidecarLaunchSpec {
     const resBase = process.resourcesPath ?? join(repoRoot, 'release');
     const isWin = process.platform === 'win32';
     // Windows uses --onedir (see scripts/build-python-bundle.js header for
-    // rationale); the .exe lives inside the onedir tree, not at its root.
-    // macOS / Linux use --onefile so the binary sits directly under
-    // resources/backend/.
+    // rationale); electron-builder then copies the onedir tree's CONTENTS
+    // (win.extraResources: backend/dist/swing-backend-win/ → backend/), so
+    // the installed layout is FLAT: resources/backend/swing-backend.exe with
+    // _internal/ beside it. The old nested join here pointed at a
+    // backend/swing-backend-win/ directory that never exists after install
+    // → spawn ENOENT on every Windows machine (first real runtime test
+    // 2026-09-09; CI only verifies the repo-side bundle, not installed
+    // paths). macOS / Linux use --onefile, also flat under resources/backend/.
     const exe = isWin
-      ? join(resBase, 'backend', 'swing-backend-win', 'swing-backend.exe')
+      ? join(resBase, 'backend', 'swing-backend.exe')
       : join(resBase, 'backend', 'swing-backend');
     return {
       command: exe,
@@ -390,7 +395,7 @@ function appIconPath(preferPng = false): string | undefined {
 // is this specific app — the macOS app-menu slot gets the *brand* line,
 // while the BrowserWindow title (separately wired below) stays as
 // "Swing-Analysis" so the window caption names the actual app.
-// package.json `productName` is "AceCrush Swing-Analysis" for installers.
+// package.json `productName` is "AceCrush-Swing-Analysis" for installers.
 if (process.platform === 'darwin') app.setName('AceCrush');
 
 // macOS Dock icon — must run inside `whenReady` because `app.dock` is
@@ -806,8 +811,8 @@ ipcMain.handle('open-external', async (_evt, url: string) => {
 ipcMain.handle('show-about', () => {
   dialog.showMessageBox({
     type: 'info',
-    title: '关于 AceCrush Swing-Analysis',
-    message: 'AceCrush Swing-Analysis',
+    title: '关于 AceCrush-Swing-Analysis',
+    message: 'AceCrush-Swing-Analysis',
     detail: [
       'AceCrush 品牌系列 · 网球挥拍自动切分工具',
       '',
@@ -981,7 +986,7 @@ function buildMenu() {
       },
       { type: 'separator' as const },
       {
-        label: '关于 AceCrush Swing-Analysis',
+        label: '关于 AceCrush-Swing-Analysis',
         click: () => ipcMain.emit('menu:about'),
       },
     ],
@@ -998,8 +1003,8 @@ ipcMain.on('menu:about', () => {
   if (!w) return;
   dialog.showMessageBox(w, {
     type: 'info',
-    title: '关于 AceCrush Swing-Analysis',
-    message: 'AceCrush Swing-Analysis',
+    title: '关于 AceCrush-Swing-Analysis',
+    message: 'AceCrush-Swing-Analysis',
     detail: [
       'AceCrush 品牌系列 · 网球挥拍自动切分工具',
       '',

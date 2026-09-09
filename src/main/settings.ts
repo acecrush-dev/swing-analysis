@@ -67,10 +67,10 @@ export function saveSettings(s: AppSettings): boolean {
  * In packaged builds `__dirname` lives inside app.asar so `<repoRoot>`
  * points at a path that doesn't exist on disk. We pivot to
  * `app.getPath('userData')` which Electron resolves to a per-OS, per-user
- * writable directory keyed off the package's `productName` ("AceCrush
- * Swing-Analysis") → macOS `~/Library/Application Support/AceCrush
- * Swing-Analysis/`, Linux `~/.config/AceCrush Swing-Analysis/`, Windows
- * `%APPDATA%/AceCrush Swing-Analysis/`. The user can still override via
+ * writable directory keyed off the package's `productName`
+ * ("AceCrush-Swing-Analysis") → macOS `~/Library/Application
+ * Support/AceCrush-Swing-Analysis/`, Linux `~/.config/AceCrush-Swing-Analysis/`,
+ * Windows `%APPDATA%/AceCrush-Swing-Analysis/`. The user can still override via
  * the Settings panel.
  */
 export function defaultDataDir(): string {

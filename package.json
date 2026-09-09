@@ -1,6 +1,6 @@
 {
   "name": "swing-analysis-gui",
-  "productName": "AceCrush Swing-Analysis",
+  "productName": "AceCrush-Swing-Analysis",
   "version": "1.0.0",
   "private": true,
   "license": "MIT",
@@ -119,7 +119,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "AceCrush Swing-Analysis",
+      "shortcutName": "AceCrush-Swing-Analysis",
       "deleteAppDataOnUninstall": false
     },
     "mac": {
@@ -161,7 +161,7 @@
       ]
     },
     "dmg": {
-      "title": "${productName} ${version}",
+      "title": "${productName}-${version}",
       "iconSize": 128,
       "contents": [
         {
@@ -233,7 +233,7 @@
     },
     "protocols": [
       {
-        "name": "AceCrush Swing-Analysis",
+        "name": "AceCrush-Swing-Analysis",
         "schemes": [
           "swing-analysis"
         ]
