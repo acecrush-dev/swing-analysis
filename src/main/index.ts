@@ -220,11 +220,25 @@ class PythonSidecar {
       // detached (POSIX only): put the sidecar in its own process group so
       //   process.kill(-pid) in kill() reaches the whole tree, not just
       //   the immediate child.
+      // env: on Windows, Python's stdout/stderr default to the OEM code
+      //   page (GBK on zh-CN systems). The pipeline prints unicode box
+      //   chars (e.g. "viz=✓" in segment_swing.render_outputs) which
+      //   GBK cannot encode → UnicodeEncodeError bubbles out of
+      //   render_outputs → Pass 2 aborts, viz.mp4 is never written, and
+      //   the renderer stays on a stale frame even though Pass 1 already
+      //   wrote the clip files. The same encoding failure re-fires when
+      //   the user clicks 取消 and any pending print flushes. Force UTF-8
+      //   for the child so any unicode print goes through.
       const spawnOpts = this.cwd ? { cwd: this.cwd } : {};
       this.proc = spawn(this.command, args, {
         ...spawnOpts,
         windowsHide: true,
         detached: process.platform !== 'win32',
+        env: {
+          ...process.env,
+          PYTHONIOENCODING: 'utf-8',
+          PYTHONUTF8: '1',
+        },
       });
       const onLine = (chunk: Buffer) => {
         const s = chunk.toString();
