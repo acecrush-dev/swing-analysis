@@ -442,7 +442,13 @@ jobs:
           echo "::notice::Draft release ${TAG} created: https://github.com/acecrush-dev/swing-analysis-app/releases/tag/${TAG}"
 
   publish:
-    needs: publish-release
+    # resolve-tag MUST be a DIRECT need: the `needs` context only exposes
+    # directly-depended-on jobs, so with only `needs: publish-release` the
+    # transitive needs.resolve-tag.outputs.version resolved to an EMPTY
+    # string → `gh release edit ""` → "release not found" (runs
+    # 34315954355 / 34327240832 — the step ran as
+    # "Promoting draft release  to public …", note the double space).
+    needs: [publish-release, resolve-tag]
     runs-on: ubuntu-latest
     if: ${{ inputs.publish_final }}
     env:
@@ -454,6 +460,18 @@ jobs:
           TAG: ${{ needs.resolve-tag.outputs.version }}
         run: |
           set -euo pipefail
+          # Belt-and-suspenders: if TAG ever comes through empty again,
+          # resolve the pipeline's draft directly instead of failing.
+          if [ -z "$TAG" ]; then
+            echo "⚠️ TAG output was empty — resolving draft release directly …"
+            TAG=$(gh release list --repo acecrush-dev/swing-analysis-app --limit 20 \
+                    --json tagName,isDraft \
+                    -q '[.[] | select(.isDraft)] | map(.tagName) | sort_by(.) | last // empty' 2>/dev/null || true)
+          fi
+          if [ -z "$TAG" ]; then
+            echo "::error::no TAG and no draft release found on acecrush-dev/swing-analysis-app — nothing to promote"
+            exit 1
+          fi
           echo "Promoting draft release ${TAG} to public …"
           gh release edit "${TAG}" --repo acecrush-dev/swing-analysis-app --draft=false
           echo "::notice::Release ${TAG} is now public: https://github.com/acecrush-dev/swing-analysis-app/releases/tag/${TAG}"
