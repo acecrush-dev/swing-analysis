@@ -16,6 +16,8 @@
 #      swing-analysis/.env → ../acecrush-craft/app/docs/.env（CF 凭据实际所在）
 #   4. 未 link 时自动 `vercel link --yes --project $DOCS_PROJECT`（craft 版是报错退出）
 #   5. CF 凭据只在真正跑 DNS 步骤时要求（--skip-dns 时不需要）
+#   6. 域名用 `domains add`（项目域）而非 craft 版的 `alias set`（单次部署 alias）——
+#      后者流量可通但 Vercel 后台 Domains 列表不显示（2026-09-18 实测踩坑）
 #
 # 前置（一次性）：
 #   1. Vercel 账号（https://vercel.com/signup，Hobby plan 即可）
@@ -29,7 +31,9 @@
 #   3. npm run docs:build -- --base / → docs/.vitepress/dist（**本地** build，Vercel 端不 build）
 #   4. dist 复制到仓库外临时目录（剥离 git 元数据，避免 Vercel 拿 commit 邮箱去
 #      GitHub 校验导致整单 BLOCKED）→ vercel deploy --prod --yes
-#   5. vercel alias set <production-url> swing-analysis-docs.acecrush.dev
+#   5. 域名挂载：vercel domains add swing-analysis-docs.acecrush.dev（项目域模式，
+#      后台 Domains 列表可见、自动跟随生产部署 —— 同 acecrush-website 的显示效果）；
+#      domains add 失败时回退 alias set（流量可通但后台不显示，仅兜底）
 #
 # 关于 base path：当前 docs/.vitepress/config.mts 的 base='/swing-analysis-app/'，是为了
 # GitHub Pages 镜像。本脚本部署到 Vercel 时默认强制覆盖为 base='/'（DOCS_BASE 默认 /），
@@ -205,27 +209,31 @@ DEPLOY_OUTPUT="$(cd "$DEPLOY_RUN_DIR" && $VERCEL_BIN deploy --prod --yes . 2>&1)
 echo "$DEPLOY_OUTPUT"
 echo "  ---> [4/4] deploy 总耗时 $(($(date +%s) - START_DEPLOY))s"
 
-# alias（独立于 deploy：即使 deploy 输出里没抓到 URL，也尝试用最近的 production URL）。
-# 直接抓输出里的 *.vercel.app 域名（比匹配 "Production" 行更稳，不受排版/耗时列影响）
-PROD_URL="$(echo "$DEPLOY_OUTPUT" | grep -oE 'https://[a-zA-Z0-9.-]+\.vercel\.app' | head -1)"
+# 域名挂载 —— 与 acecrush-website 同款「项目域（project domain）」模式：
+#   website 后台能显示 acecrush.dev / www.acecrush.dev，是因为它们是项目的 Domain
+#   （dashboard → Settings → Domains 列表），每次生产部署自动挂载、从不需要 alias。
+#   旧 `alias set` 只生成绑定单次部署 URL 的 alias —— 流量通（域名能访问），
+#   但后台项目 Domains 列表不显示（2026-09-18 实测踩坑）。
+# 优先 `domains add <domain> <project>`（DNS CNAME 已配好时即时验证通过）；
+# 重跑时报 "already attached / exists" 类错误属幂等正常；失败再退回 alias set 兜底。
 DOMAIN="$DOCS_SUBDOMAIN.$CF_ZONE"
-if [ -z "$PROD_URL" ]; then
-  # 没抓到时退而求其次：用 vercel ls 拿项目最新的 production URL
-  echo "  ⚠️  deploy 输出里没抓到 Production URL，尝试从 vercel ls 取最新部署 URL"
-  PROD_URL="$($VERCEL_BIN ls --prod 2>/dev/null | grep -E "$CURRENT_PROJECT_ID" | head -1 | awk '{print $NF}')"
-fi
-if [ -n "$PROD_URL" ]; then
-  # CLI 59 的 `deploy` 本身就会等 deployment READY 才退出（退出时产物已可用），
-  # 所以这里不再单独等，直接 alias。若 alias 报 not ready，重跑本脚本即可。
-  echo "==> deployment ready, aliasing: $PROD_URL"
-  echo "==> aliasing $PROD_URL -> $DOMAIN"
-  $VERCEL_BIN alias set "$PROD_URL" "$DOMAIN"
-  ALIAS_RC=$?
-  if [ "$ALIAS_RC" -ne 0 ]; then
-    echo "  ⚠️  alias 失败 (rc=$ALIAS_RC) — 到 Vercel dashboard 检查 $DOMAIN"
-  fi
+if $VERCEL_BIN domains add "$DOMAIN" "$CURRENT_PROJECT"; then
+  echo "  ✓ $DOMAIN 已挂为项目域（dashboard → Settings → Domains 可见，自动跟随生产部署）"
 else
-  echo "==> ⚠️  完全抓不到 production URL — 请到 Vercel dashboard 手动加 domain $DOMAIN"
+  echo "  ⚠️  domains add 未成功（已挂过时报错属正常）→ 回退 alias set 兜底"
+  # 直接抓输出里的 *.vercel.app 域名（比匹配 "Production" 行更稳，不受排版/耗时列影响）
+  PROD_URL="$(echo "$DEPLOY_OUTPUT" | grep -oE 'https://[a-zA-Z0-9.-]+\.vercel\.app' | head -1)"
+  if [ -z "$PROD_URL" ]; then
+    echo "  ⚠️  deploy 输出里没抓到 Production URL，尝试从 vercel ls 取最新部署 URL"
+    PROD_URL="$($VERCEL_BIN ls --prod 2>/dev/null | grep -E "$CURRENT_PROJECT_ID" | head -1 | awk '{print $NF}')"
+  fi
+  if [ -n "$PROD_URL" ]; then
+    echo "==> aliasing $PROD_URL -> $DOMAIN"
+    $VERCEL_BIN alias set "$PROD_URL" "$DOMAIN" \
+      || echo "  ⚠️  alias 也失败 — 到 Vercel dashboard → Settings → Domains 手动添加 $DOMAIN"
+  else
+    echo "==> ⚠️  抓不到 production URL — 到 Vercel dashboard → Settings → Domains 手动添加 $DOMAIN"
+  fi
 fi
 set -e
 
