@@ -98,3 +98,5 @@ data
 # re-include unmatchable (same gotcha as build/ above).
 src/renderer/public/assets/models/*
 !src/renderer/public/assets/models/README.md
+.vercel
+.env*
