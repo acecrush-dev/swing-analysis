@@ -399,6 +399,11 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
     steps:
+      # Release body comes from CHANGELOG.md (version-section extraction
+      # below) — this checkout provides the file.
+      # （发布描述取自 CHANGELOG.md 对应版本段落 —— 本次 checkout 提供该文件）
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           pattern: installers-*
@@ -431,10 +436,28 @@ jobs:
           fi
           printf 'asset: %s\n' "${assets[@]}"
 
+          # Release body = CHANGELOG.md 里 "## [<VERSION>]" 段落（TAG 去掉 v 前缀）。
+          # 提取规则：行首字面匹配标题行（awk index()，marker 含闭合 ] 所以
+          # 1.0.0 不会误命中 1.0.01）；遇到下一个 "## [" 小节或底部链接引用
+          # （^[Unreleased]: …）即停。段落缺失 → warning + 回退占位文案
+          # （忘写 changelog 不阻塞出包）。--generate-notes 保留：GitHub 会在
+          # body 末尾自动追加 Full Changelog 脚注。
+          VERSION="${TAG#v}"
+          NOTES_FILE="release-notes.md"
+          awk -v marker="## [$VERSION]" '
+            index($0, marker) == 1 { found = 1; next }
+            found && (/^## \[/ || /^\[/) { found = 0 }
+            found { print }
+          ' CHANGELOG.md > "$NOTES_FILE"
+          if [ ! -s "$NOTES_FILE" ]; then
+            echo "::warning::CHANGELOG.md has no '## [$VERSION]' section — using fallback draft notice"
+            printf '%s\n' "Automated draft release. Promote to public via the 'release' workflow with publish_final=true once verified." > "$NOTES_FILE"
+          fi
+
           gh release create "$TAG" \
               --repo acecrush-dev/swing-analysis-app \
               --title "AceCrush Swing-Analysis $TAG" \
-              --notes "Automated draft release. Promote to public via the 'release' workflow with publish_final=true once verified." \
+              --notes-file "$NOTES_FILE" \
               --generate-notes \
               --draft \
               "${assets[@]}"
